@@ -32,6 +32,8 @@ const configSchema = z.object({
   imageModel: z.string().default("composer-2.5"),
   planFastPath: z.boolean().default(true),
   healthPublic: z.boolean().default(false),
+  /** When true, requests with OpenAI tools (Hermes) run Cursor agent mode to execute file/shell work. */
+  hermesAgentMode: z.boolean().default(true),
 })
 
 export type ProxyConfig = z.infer<typeof configSchema>
@@ -63,4 +65,5 @@ export const loadConfig = (): ProxyConfig =>
     imageModel: env("IMAGE_MODEL"),
     planFastPath: boolFromEnv(env("PLAN_FAST"), true),
     healthPublic: boolFromEnv(env("HEALTH_PUBLIC"), false),
+    hermesAgentMode: boolFromEnv(env("HERMES_AGENT_MODE"), true),
   })

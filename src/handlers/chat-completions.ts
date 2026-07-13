@@ -1,11 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import { homedir } from "node:os"
 
 import type { ProxyConfig } from "../config.js"
 import type { RequestSemaphore } from "../concurrency.js"
 import { listCursorModels } from "../cursor/cli.js"
 import { CursorAgentRunner } from "../cursor/runner.js"
 import { resolveRequestMode, resolveWorkspace } from "../cursor/workspace.js"
-import { resolveExecutionMode } from "../openai/plan-mode.js"
+import { resolveHermesExecution, finalizeHermesDelegationOutput } from "../openai/hermes-mode.js"
 import {
   buildPromptFromMessages,
   normalizeModelId,
@@ -53,6 +54,7 @@ export const handleHealth = (
     default_model: ctx.config.defaultModel,
     mode: ctx.config.agentMode,
     plan_fast_path: ctx.config.planFastPath,
+    hermes_agent_mode: ctx.config.hermesAgentMode,
     embedding_provider: ctx.config.embeddingProvider,
     endpoints: [
       "GET /health",
@@ -165,10 +167,15 @@ export const handleChatCompletions = async (
     return
   }
 
-  const execution = resolveExecutionMode(ctx.config, requestedMode)
+  const execution = resolveHermesExecution(ctx.config, requestedMode, body)
 
-  const toolsText = toolsToSystemText(body.tools, body.functions)
+  const toolsText = execution.injectToolsAsPrompt
+    ? toolsToSystemText(body.tools, body.functions)
+    : undefined
   const systemParts: Array<{ role: "system"; content: string }> = []
+  if (execution.systemPrompt) {
+    systemParts.push({ role: "system", content: execution.systemPrompt })
+  }
   if (execution.planSystemPrompt) {
     systemParts.push({ role: "system", content: execution.planSystemPrompt })
   }
@@ -177,11 +184,15 @@ export const handleChatCompletions = async (
   }
   const messages = [...systemParts, ...body.messages]
   const prompt = buildPromptFromMessages(messages)
-  const workspace = resolveWorkspace(
-    ctx.config,
-    req.headers["x-cursor-workspace"],
-    execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : undefined,
-  )
+
+  const headerWorkspace = req.headers["x-cursor-workspace"]
+  const workspace = execution.useHomeWorkspace
+    ? { workspaceDir: homedir() }
+    : resolveWorkspace(
+        ctx.config,
+        headerWorkspace,
+        execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : false,
+      )
   const runner = new CursorAgentRunner(ctx.config)
 
   const invocation = {
@@ -190,6 +201,7 @@ export const handleChatCompletions = async (
     stream: body.stream === true,
     mode: execution.cliMode,
     workspaceDir: workspace.workspaceDir,
+    suppressNativeToolCalls: execution.hermesDelegation,
   }
 
   logRequest(ctx.config.verboseLogging, "POST", "/v1/chat/completions", {
@@ -197,6 +209,7 @@ export const handleChatCompletions = async (
     model,
     requested_mode: requestedMode,
     cli_mode: execution.cliMode,
+    hermes_delegation: execution.hermesDelegation,
     plan_fast_path: execution.planSystemPrompt !== undefined,
     stream: invocation.stream,
   })
@@ -214,13 +227,19 @@ export const handleChatCompletions = async (
         prompt,
         ctx,
         startedAt,
+        execution.hermesDelegation,
       )
       return
     }
 
     const result = await runner.runSyncJson(invocation)
-    const toolCalls = result.toolCalls ?? parseToolCallsFromText(result.text)
-    const usage = buildUsage(result.usage, prompt, result.text)
+    const rawToolCalls = result.toolCalls ?? parseToolCallsFromText(result.text)
+    const finalized = finalizeHermesDelegationOutput(
+      execution.hermesDelegation,
+      result.text,
+      rawToolCalls,
+    )
+    const usage = buildUsage(result.usage, prompt, finalized.text)
 
     sendJson(
       res,
@@ -228,8 +247,8 @@ export const handleChatCompletions = async (
       createChatResponse(
         requestId,
         result.model || model,
-        result.text,
-        toolCalls,
+        finalized.text,
+        finalized.toolCalls,
         usage,
       ),
     )
@@ -237,7 +256,7 @@ export const handleChatCompletions = async (
     logResponse(ctx.config.verboseLogging, requestId, 200, Date.now() - startedAt, {
       model: result.model || model,
       usage,
-      tool_calls: toolCalls?.length ?? 0,
+      tool_calls: finalized.toolCalls?.length ?? 0,
     })
   } catch (error) {
     sendError(
@@ -266,6 +285,7 @@ const handleStreamingResponse = async (
   prompt: string,
   ctx: HandlerContext,
   startedAt: number,
+  hermesDelegation = false,
 ): Promise<void> => {
   writeSse(res, {
     "X-Request-Id": requestId,
@@ -289,6 +309,7 @@ const handleStreamingResponse = async (
     })
 
     runner.on("toolCall", ({ toolCall, index }) => {
+      if (hermesDelegation) return
       streamedToolCalls.set(index, toolCall)
       writeSse(
         res,
@@ -309,7 +330,7 @@ const handleStreamingResponse = async (
       resolvedModel = detectedModel || model
       cliUsage = usage
 
-      if (toolCalls?.length) {
+      if (toolCalls?.length && !hermesDelegation) {
         for (const [index, toolCall] of toolCalls.entries()) {
           if (streamedToolCalls.has(index)) continue
           writeSse(
@@ -340,15 +361,32 @@ const handleStreamingResponse = async (
     runner
       .runStream(invocation)
       .then(() => {
-        const toolCalls =
+        const rawToolCalls =
           parseToolCallsFromText(fullText) ??
           (streamedToolCalls.size
             ? [...streamedToolCalls.entries()]
                 .sort(([a], [b]) => a - b)
                 .map(([, call]) => call)
             : undefined)
-        const finishReason = toolCalls?.length ? "tool_calls" : "stop"
-        const usage = buildUsage(cliUsage, prompt, fullText)
+        const finalized = finalizeHermesDelegationOutput(
+          hermesDelegation,
+          fullText,
+          rawToolCalls,
+        )
+        if (hermesDelegation && finalized.text !== fullText && finalized.text) {
+          writeSse(
+            res,
+            {},
+            `data: ${JSON.stringify(createTextChunk(requestId, resolvedModel, finalized.text, isFirst))}\n\n`,
+          )
+          fullText = finalized.text
+        }
+        const finishReason = hermesDelegation
+          ? "stop"
+          : finalized.toolCalls?.length
+            ? "tool_calls"
+            : "stop"
+        const usage = buildUsage(cliUsage, prompt, finalized.text)
 
         writeSse(
           res,
@@ -361,7 +399,7 @@ const handleStreamingResponse = async (
         logResponse(ctx.config.verboseLogging, requestId, 200, Date.now() - startedAt, {
           model: resolvedModel,
           usage,
-          tool_calls: toolCalls?.length ?? 0,
+          tool_calls: finalized.toolCalls?.length ?? 0,
         })
         resolve()
       })

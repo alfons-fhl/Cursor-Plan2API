@@ -216,6 +216,8 @@ export type AgentInvocation = {
   stream: boolean
   mode: ProxyConfig["agentMode"]
   workspaceDir: string
+  /** Do not emit Cursor-native tool_call events (Hermes delegation). */
+  suppressNativeToolCalls?: boolean
 }
 
 /**

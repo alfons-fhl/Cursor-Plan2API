@@ -34,6 +34,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
   private detectedModel = "auto"
   private sawResult = false
   private toolCallIndex = 0
+  private suppressNativeToolCalls = false
 
   constructor(private readonly config: ProxyConfig) {
     super()
@@ -47,6 +48,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
     this.detectedModel = invocation.model
     this.sawResult = false
     this.toolCallIndex = 0
+    this.suppressNativeToolCalls = invocation.suppressNativeToolCalls === true
 
     const args = buildAgentArgs(this.config, { ...invocation, stream: true })
     const stdin = resolvePromptStdin(this.config, invocation.prompt)
@@ -80,7 +82,9 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
     }
 
     if (!this.sawResult && this.turnBuffer.trim()) {
-      const toolCalls = parseToolCallsFromText(this.turnBuffer)
+      const toolCalls = this.suppressNativeToolCalls
+        ? undefined
+        : parseToolCallsFromText(this.turnBuffer)
       this.emit("result", {
         text: this.turnBuffer,
         model: this.detectedModel,
@@ -127,6 +131,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
     this.detectedModel = invocation.model
     this.sawResult = false
     this.toolCallIndex = 0
+    this.suppressNativeToolCalls = invocation.suppressNativeToolCalls === true
 
     const args = buildAgentArgs(this.config, { ...invocation, stream: true })
     const stdin = resolvePromptStdin(this.config, invocation.prompt)
@@ -171,12 +176,18 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
     }
 
     const text = this.turnBuffer.trim() || result.stdout.trim()
-    const parsedToolCalls = parseToolCallsFromText(text)
+    const parsedToolCalls = this.suppressNativeToolCalls
+      ? undefined
+      : parseToolCallsFromText(text)
 
     return {
       text,
       model: this.detectedModel,
-      toolCalls: parsedToolCalls ?? (collectedToolCalls.length ? collectedToolCalls : undefined),
+      toolCalls:
+        parsedToolCalls ??
+        (this.suppressNativeToolCalls || collectedToolCalls.length === 0
+          ? undefined
+          : collectedToolCalls),
       usage,
     }
   }
@@ -243,6 +254,11 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
     }
 
     if (isToolCallMessage(message)) {
+      if (this.suppressNativeToolCalls) {
+        this.turnBuffer = ""
+        return
+      }
+
       const mapped = mapCliToolCall(message)
       if (mapped) {
         this.emit("toolCall", { toolCall: mapped, index: this.toolCallIndex })
@@ -258,7 +274,9 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
       if (message.usage) {
         options?.onUsage?.(message.usage)
       }
-      const toolCalls = parseToolCallsFromText(message.result ?? this.turnBuffer)
+      const toolCalls = this.suppressNativeToolCalls
+        ? undefined
+        : parseToolCallsFromText(message.result ?? this.turnBuffer)
       this.emit("result", {
         text: message.result ?? this.turnBuffer,
         model: this.detectedModel,
