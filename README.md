@@ -13,10 +13,10 @@
 | OpenAI SDK / LangChain / n8n | ✅ Supported | Standard `/v1/chat/completions` |
 
 ```text
-┌──────────────┐   Hermes / OpenCode / SDK   ┌──────────────────┐   agent CLI   ┌─────────────┐
-│ Hermes Agent │ ───────────────────────────►│ Cursor-Plan2API  │ ─────────────►│ Cursor Sub  │
-│   OpenCode   │ ◄───────────────────────────│  localhost:8787  │ ◄─────────────│ Composer 2.5│
-└──────────────┘      OpenAI JSON / SSE      └──────────────────┘               └─────────────┘
+┌─────────────┐   POST /v1/chat/completions   ┌──────────────────┐      agent CLI       ┌─────────────┐
+│   Hermes    │ ─────────────────────────────►│ Cursor-Plan2API  │ ─────────────────────►│   Cursor    │
+│  OpenAI SDK │ ◄─────────────────────────────│  localhost:8787  │ ◄─────────────────────│  composer-2.5│
+└─────────────┘       OpenAI JSON / SSE       └──────────────────┘                      └─────────────┘
 ```
 
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)]()
