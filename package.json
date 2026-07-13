@@ -1,0 +1,29 @@
+{
+  "name": "cursor-plan2api",
+  "version": "0.3.0",
+  "description": "Cursor-Plan2API — OpenAI-compatible API bridge for Cursor CLI subscription auth",
+  "type": "module",
+  "bin": {
+    "cursor-plan2api": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "test": "node scripts/full-test.mjs",
+    "test:edge": "node scripts/edge-test.mjs",
+    "test:all": "node scripts/full-test.mjs && node scripts/edge-test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.2",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.7",
+    "tsx": "^4.19.3",
+    "typescript": "^5.7.3"
+  }
+}
