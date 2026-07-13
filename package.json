@@ -1,7 +1,7 @@
 {
   "name": "cursor-plan2api",
   "version": "0.3.0",
-  "description": "Cursor-Plan2API — OpenAI-compatible API bridge for Cursor CLI subscription auth",
+  "description": "Cursor-Plan2API — Hermes & OpenCode compatible OpenAI API for your Cursor.ai subscription",
   "type": "module",
   "bin": {
     "cursor-plan2api": "./dist/cli.js"

@@ -96,8 +96,9 @@ export const buildPromptFromMessages = (messages: OpenAiMessage[]): string => {
     }
 
     if (message.role === "tool" || message.role === "function") {
-      const label = message.name ? `Tool (${message.name})` : "Tool"
-      conversation.push(`${label}: ${text}`)
+      const id = message.tool_call_id ? ` (id: ${message.tool_call_id})` : ""
+      const label = message.name ? `Tool result (${message.name})${id}` : `Tool result${id}`
+      conversation.push(`${label}:\n${text}`)
     }
   }
 
@@ -127,9 +128,23 @@ export const parseToolCallsFromText = (
   const trimmed = text.trim()
   if (!trimmed) return undefined
 
-  const candidates = [trimmed]
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fenced?.[1]) candidates.unshift(fenced[1].trim())
+  const candidates: string[] = []
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/gi)
+  if (fenced) {
+    for (const block of fenced) {
+      const inner = block.replace(/```(?:json)?/i, "").replace(/```$/, "").trim()
+      if (inner) candidates.push(inner)
+    }
+  }
+
+  candidates.push(trimmed)
+
+  const objectPattern = /\{[\s\S]*?"tool_calls"\s*:\s*\[[\s\S]*?\][\s\S]*?\}/g
+  const objectMatches = trimmed.match(objectPattern)
+  if (objectMatches) {
+    candidates.unshift(...objectMatches)
+  }
 
   for (const candidate of candidates) {
     try {

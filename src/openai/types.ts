@@ -23,6 +23,7 @@ export type OpenAiChatRequest = {
   model?: string
   messages: OpenAiMessage[]
   stream?: boolean
+  user?: string
   tools?: Array<{ type?: string; function?: Record<string, unknown> }>
   tool_choice?: unknown
   functions?: Array<Record<string, unknown>>

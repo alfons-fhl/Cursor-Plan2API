@@ -218,6 +218,8 @@ export type AgentInvocation = {
   workspaceDir: string
   /** Do not emit Cursor-native tool_call events (Hermes delegation). */
   suppressNativeToolCalls?: boolean
+  /** Cursor CLI session id for `--resume` follow-ups. */
+  resumeSessionId?: string
 }
 
 /**
@@ -231,6 +233,9 @@ export const buildAgentArgs = (
 
   if (config.forceRun) args.push("--force")
   if (config.trustWorkspace) args.push("--trust")
+  if (invocation.resumeSessionId) {
+    args.push("--resume", invocation.resumeSessionId)
+  }
   if (invocation.mode !== "agent") args.push("--mode", invocation.mode)
 
   args.push("--workspace", invocation.workspaceDir, "--model", invocation.model)

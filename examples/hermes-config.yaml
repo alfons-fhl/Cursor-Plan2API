@@ -1,0 +1,20 @@
+# Hermes Agent → Cursor-Plan2API (Cursor.ai subscription)
+# Copy to ~/.hermes/config.yaml and adjust if needed.
+
+model:
+  provider: custom
+  default: composer-2.5
+  base_url: http://127.0.0.1:8787/v1
+
+# ~/.hermes/.env:
+# OPENAI_API_KEY=not-needed
+
+# Recommended models (same as OpenCode):
+#   composer-2.5       — default, balanced
+#   composer-2.5-fast  — faster turns
+#   auto               — Cursor auto routing
+#
+# Examples:
+#   hermes -z "Hello" -m composer-2.5
+#   hermes -z "Quick task" -m composer-2.5-fast
+#   hermes -z "Route me" -m auto

@@ -7,6 +7,8 @@ import {
 
 import type { ProxyConfig } from "./config.js"
 import { RequestSemaphore } from "./concurrency.js"
+import { CursorSessionStore } from "./cursor/session-store.js"
+import { warmupCursorCli } from "./cursor/warmup.js"
 import {
   handleChatCompletions,
   handleHealth,
@@ -23,13 +25,14 @@ type ServerContext = {
   config: ProxyConfig
   cliVersion?: string
   semaphore: RequestSemaphore
+  sessionStore: CursorSessionStore
 }
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers":
-    "Authorization, Content-Type, X-Cursor-Mode, X-Cursor-Workspace",
+    "Authorization, Content-Type, X-Cursor-Mode, X-Cursor-Workspace, X-Plan2API-Session, X-Plan2API-Client",
 }
 
 const notFound = (res: ServerResponse): void => {
@@ -121,10 +124,17 @@ export const startServer = async (
   config: ProxyConfig,
   cliVersion?: string,
 ): Promise<Server> => {
+  const sessionStore = new CursorSessionStore(config.sessionTtlMs)
+
+  if (config.warmupOnStart) {
+    await warmupCursorCli(config)
+  }
+
   const server = createProxyServer({
     config,
     cliVersion,
     semaphore: new RequestSemaphore(config.maxConcurrentRequests),
+    sessionStore,
   })
 
   await new Promise<void>((resolve, reject) => {

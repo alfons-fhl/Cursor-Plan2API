@@ -21,7 +21,13 @@ import {
 export type AgentStreamEvents = {
   delta: [{ text: string }]
   toolCall: [{ toolCall: ParsedToolCall; index: number }]
-  result: [{ text: string; model: string; toolCalls?: ParsedToolCall[]; usage?: CursorCliUsage }]
+  result: [{
+    text: string
+    model: string
+    toolCalls?: ParsedToolCall[]
+    usage?: CursorCliUsage
+    sessionId?: string
+  }]
   error: [Error]
   close: [number | null]
 }
@@ -35,6 +41,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
   private sawResult = false
   private toolCallIndex = 0
   private suppressNativeToolCalls = false
+  private sessionId?: string
 
   constructor(private readonly config: ProxyConfig) {
     super()
@@ -49,6 +56,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
     this.sawResult = false
     this.toolCallIndex = 0
     this.suppressNativeToolCalls = invocation.suppressNativeToolCalls === true
+    this.sessionId = invocation.resumeSessionId
 
     const args = buildAgentArgs(this.config, { ...invocation, stream: true })
     const stdin = resolvePromptStdin(this.config, invocation.prompt)
@@ -89,6 +97,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
         text: this.turnBuffer,
         model: this.detectedModel,
         toolCalls,
+        sessionId: this.sessionId,
       })
     }
   }
@@ -132,6 +141,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
     this.sawResult = false
     this.toolCallIndex = 0
     this.suppressNativeToolCalls = invocation.suppressNativeToolCalls === true
+    this.sessionId = invocation.resumeSessionId
 
     const args = buildAgentArgs(this.config, { ...invocation, stream: true })
     const stdin = resolvePromptStdin(this.config, invocation.prompt)
@@ -189,6 +199,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
           ? undefined
           : collectedToolCalls),
       usage,
+      sessionId: this.sessionId,
     }
   }
 
@@ -221,13 +232,17 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
   }
 
   private handleMessage(
-    message: Parameters<typeof isSystemInit>[0],
+    message: Parameters<typeof isSystemInit>[0] & { session_id?: string },
     options?: {
       collectToolCalls?: boolean
       onToolCall?: (toolCall: ParsedToolCall) => void
       onUsage?: (usage: CursorCliUsage) => void
     },
   ): void {
+    if (typeof message.session_id === "string" && message.session_id.trim()) {
+      this.sessionId = message.session_id.trim()
+    }
+
     if (isSystemInit(message) && message.model) {
       this.detectedModel = message.model
       return
@@ -282,6 +297,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
         model: this.detectedModel,
         toolCalls,
         usage: message.usage,
+        sessionId: this.sessionId,
       })
     }
   }

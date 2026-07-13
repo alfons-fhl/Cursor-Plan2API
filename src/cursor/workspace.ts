@@ -1,6 +1,6 @@
 import type { IncomingMessage } from "node:http"
 import { mkdtempSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
 
 import type { ProxyConfig } from "../config.js"
@@ -40,6 +40,23 @@ export const resolveWorkspace = (
       // Temp dirs are cheap; explicit cleanup is optional for v1.
     },
   }
+}
+
+/**
+ * Resolve workspace for agent-mode requests (home dir unless header overrides).
+ */
+export const resolveAgentWorkspace = (
+  headerWorkspace?: string | string[],
+): WorkspaceContext => {
+  const headerValue = Array.isArray(headerWorkspace)
+    ? headerWorkspace[0]
+    : headerWorkspace
+
+  if (headerValue?.trim()) {
+    return { workspaceDir: headerValue.trim() }
+  }
+
+  return { workspaceDir: homedir() }
 }
 
 /**

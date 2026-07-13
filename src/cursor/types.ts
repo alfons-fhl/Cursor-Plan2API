@@ -9,6 +9,7 @@ export type CursorCliSystemInit = {
   type: "system"
   subtype: "init"
   model?: string
+  session_id?: string
 }
 
 export type CursorCliAssistantMessage = {
@@ -58,6 +59,7 @@ export type AgentRunOutput = {
   model: string
   toolCalls?: ParsedToolCall[]
   usage?: CursorCliUsage
+  sessionId?: string
 }
 
 export const isSystemInit = (

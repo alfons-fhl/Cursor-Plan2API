@@ -1,0 +1,44 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Cursor subscription via local Cursor-Plan2API gateway (OpenAI-compatible)
+  // Start gateway: npm run build && node dist/cli.js run
+  "model": "cursor-plan2api/composer-2.5",
+  "provider": {
+    "cursor-plan2api": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "Cursor Plan2API (local)",
+      "options": {
+        "baseURL": "http://127.0.0.1:8787/v1",
+        "apiKey": "not-needed",
+        "headers": {
+          "X-Cursor-Mode": "agent",
+          "X-Cursor-Workspace": "/Users/alfonsfehlhauer",
+          "X-Plan2API-Client": "opencode"
+        }
+      },
+      "models": {
+        "composer-2.5": {
+          "name": "Composer 2.5",
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
+        },
+        "composer-2.5-fast": {
+          "name": "Composer 2.5 Fast",
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
+        },
+        "auto": {
+          "name": "Cursor Auto",
+          "limit": {
+            "context": 200000,
+            "output": 16384
+          }
+        }
+      }
+    }
+  }
+}

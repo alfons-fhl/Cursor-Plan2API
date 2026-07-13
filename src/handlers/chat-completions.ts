@@ -1,17 +1,23 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
-import { homedir } from "node:os"
 
 import type { ProxyConfig } from "../config.js"
 import type { RequestSemaphore } from "../concurrency.js"
+import { CursorSessionStore, buildResumePrompt, canResumeSession } from "../cursor/session-store.js"
 import { listCursorModels } from "../cursor/cli.js"
+import { RECOMMENDED_MODELS, sortModelsWithRecommendedFirst } from "../models.js"
 import { CursorAgentRunner } from "../cursor/runner.js"
-import { resolveRequestMode, resolveWorkspace } from "../cursor/workspace.js"
-import { resolveHermesExecution, finalizeHermesDelegationOutput } from "../openai/hermes-mode.js"
+import { resolveRequestMode, resolveAgentWorkspace, resolveWorkspace } from "../cursor/workspace.js"
+import {
+  resolveHermesExecution,
+  resolvePlan2ApiClient,
+  finalizeHermesDelegationOutput,
+  finalizeOpenRouterOutput,
+} from "../openai/hermes-mode.js"
+import { toolsToOpenRouterSystemText } from "../openai/openrouter-compat.js"
 import {
   buildPromptFromMessages,
   normalizeModelId,
   parseToolCallsFromText,
-  toolsToSystemText,
 } from "../openai/prompt.js"
 import {
   createChatResponse,
@@ -31,6 +37,7 @@ type HandlerContext = {
   config: ProxyConfig
   cliVersion?: string
   semaphore: RequestSemaphore
+  sessionStore: CursorSessionStore
 }
 
 /**
@@ -54,7 +61,11 @@ export const handleHealth = (
     default_model: ctx.config.defaultModel,
     mode: ctx.config.agentMode,
     plan_fast_path: ctx.config.planFastPath,
-    hermes_agent_mode: ctx.config.hermesAgentMode,
+    hermes_agent_mode: ctx.config.clientCompat === "delegate",
+    client_compat: ctx.config.clientCompat,
+    session_resume: ctx.config.sessionResume,
+    cached_sessions: ctx.sessionStore.size(),
+    recommended_models: RECOMMENDED_MODELS.map((model) => model.id),
     embedding_provider: ctx.config.embeddingProvider,
     endpoints: [
       "GET /health",
@@ -82,9 +93,10 @@ export const handleModels = async (
   }
 
   try {
-    const models = await listCursorModels(ctx.config)
+    const models = sortModelsWithRecommendedFirst(await listCursorModels(ctx.config))
     sendJson(res, 200, {
       object: "list",
+      recommended: RECOMMENDED_MODELS,
       data: [
         ...models.map((model) => ({
           id: model.id,
@@ -167,10 +179,15 @@ export const handleChatCompletions = async (
     return
   }
 
-  const execution = resolveHermesExecution(ctx.config, requestedMode, body)
+  const execution = resolveHermesExecution(
+    ctx.config,
+    requestedMode,
+    body,
+    resolvePlan2ApiClient(req.headers),
+  )
 
   const toolsText = execution.injectToolsAsPrompt
-    ? toolsToSystemText(body.tools, body.functions)
+    ? toolsToOpenRouterSystemText(body.tools, body.functions)
     : undefined
   const systemParts: Array<{ role: "system"; content: string }> = []
   if (execution.systemPrompt) {
@@ -182,17 +199,37 @@ export const handleChatCompletions = async (
   if (toolsText) {
     systemParts.push({ role: "system", content: toolsText })
   }
+
   const messages = [...systemParts, ...body.messages]
-  const prompt = buildPromptFromMessages(messages)
+  const fullPrompt = buildPromptFromMessages(messages)
+
+  const sessionKey = ctx.sessionStore.resolveKey(req, body, model)
+  const resumeEligible =
+    ctx.config.sessionResume &&
+    fullPrompt.length >= ctx.config.sessionResumeMinChars &&
+    canResumeSession(body.messages)
+  const resumeSessionId = resumeEligible
+    ? ctx.sessionStore.get(sessionKey)
+    : undefined
+  const resumePrompt = resumeSessionId
+    ? buildResumePrompt(body.messages)
+    : null
+  const prompt =
+    resumeSessionId && resumePrompt
+      ? toolsText
+        ? `${toolsText}\n\n${resumePrompt}`
+        : resumePrompt
+      : fullPrompt
 
   const headerWorkspace = req.headers["x-cursor-workspace"]
-  const workspace = execution.useHomeWorkspace
-    ? { workspaceDir: homedir() }
-    : resolveWorkspace(
-        ctx.config,
-        headerWorkspace,
-        execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : false,
-      )
+  const workspace =
+    execution.useHomeWorkspace || execution.cliMode === "agent"
+      ? resolveAgentWorkspace(headerWorkspace)
+      : resolveWorkspace(
+          ctx.config,
+          headerWorkspace,
+          execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : false,
+        )
   const runner = new CursorAgentRunner(ctx.config)
 
   const invocation = {
@@ -202,6 +239,7 @@ export const handleChatCompletions = async (
     mode: execution.cliMode,
     workspaceDir: workspace.workspaceDir,
     suppressNativeToolCalls: execution.hermesDelegation,
+    resumeSessionId,
   }
 
   logRequest(ctx.config.verboseLogging, "POST", "/v1/chat/completions", {
@@ -210,8 +248,12 @@ export const handleChatCompletions = async (
     requested_mode: requestedMode,
     cli_mode: execution.cliMode,
     hermes_delegation: execution.hermesDelegation,
+    openrouter_compat: execution.openRouterCompat,
     plan_fast_path: execution.planSystemPrompt !== undefined,
     stream: invocation.stream,
+    session_resume: Boolean(resumeSessionId),
+    prompt_chars: prompt.length,
+    full_prompt_chars: fullPrompt.length,
   })
 
   await ctx.semaphore.acquire()
@@ -228,17 +270,30 @@ export const handleChatCompletions = async (
         ctx,
         startedAt,
         execution.hermesDelegation,
+        execution.openRouterCompat,
+        body,
+        sessionKey,
       )
       return
     }
 
     const result = await runner.runSyncJson(invocation)
+    if (ctx.config.sessionResume && result.sessionId) {
+      ctx.sessionStore.set(sessionKey, result.sessionId)
+    }
     const rawToolCalls = result.toolCalls ?? parseToolCallsFromText(result.text)
-    const finalized = finalizeHermesDelegationOutput(
-      execution.hermesDelegation,
-      result.text,
-      rawToolCalls,
-    )
+    const finalized = execution.hermesDelegation
+      ? finalizeHermesDelegationOutput(
+          execution.hermesDelegation,
+          result.text,
+          rawToolCalls,
+        )
+      : finalizeOpenRouterOutput(
+          execution.openRouterCompat,
+          result.text,
+          body,
+          rawToolCalls,
+        )
     const usage = buildUsage(result.usage, prompt, finalized.text)
 
     sendJson(
@@ -257,6 +312,8 @@ export const handleChatCompletions = async (
       model: result.model || model,
       usage,
       tool_calls: finalized.toolCalls?.length ?? 0,
+      cursor_session: result.sessionId,
+      resumed: Boolean(resumeSessionId),
     })
   } catch (error) {
     sendError(
@@ -286,6 +343,9 @@ const handleStreamingResponse = async (
   ctx: HandlerContext,
   startedAt: number,
   hermesDelegation = false,
+  openRouterCompat = false,
+  requestBody?: OpenAiChatRequest,
+  sessionKey?: string,
 ): Promise<void> => {
   writeSse(res, {
     "X-Request-Id": requestId,
@@ -295,10 +355,12 @@ const handleStreamingResponse = async (
   let fullText = ""
   let resolvedModel = model
   let cliUsage: Parameters<typeof buildUsage>[0]
+  let cursorSessionId: string | undefined
   const streamedToolCalls = new Map<number, OpenAiToolCall>()
 
   await new Promise<void>((resolve) => {
-    runner.on("delta", ({ text }) => {
+    const emitTextDelta = (text: string) => {
+      if (!text) return
       fullText += text
       writeSse(
         res,
@@ -306,10 +368,15 @@ const handleStreamingResponse = async (
         `data: ${JSON.stringify(createTextChunk(requestId, resolvedModel, text, isFirst))}\n\n`,
       )
       isFirst = false
+    }
+
+    runner.on("delta", ({ text }) => {
+      if (openRouterCompat && looksLikeToolCallJson(text)) return
+      emitTextDelta(text)
     })
 
     runner.on("toolCall", ({ toolCall, index }) => {
-      if (hermesDelegation) return
+      if (hermesDelegation || openRouterCompat) return
       streamedToolCalls.set(index, toolCall)
       writeSse(
         res,
@@ -323,14 +390,15 @@ const handleStreamingResponse = async (
       )
     })
 
-    runner.on("result", ({ text, model: detectedModel, toolCalls, usage }) => {
+    runner.on("result", ({ text, model: detectedModel, toolCalls, usage, sessionId }) => {
+      if (sessionId) cursorSessionId = sessionId
       if (text && !fullText.includes(text)) {
         fullText = text
       }
       resolvedModel = detectedModel || model
       cliUsage = usage
 
-      if (toolCalls?.length && !hermesDelegation) {
+      if (toolCalls?.length && !hermesDelegation && !openRouterCompat) {
         for (const [index, toolCall] of toolCalls.entries()) {
           if (streamedToolCalls.has(index)) continue
           writeSse(
@@ -368,25 +436,42 @@ const handleStreamingResponse = async (
                 .sort(([a], [b]) => a - b)
                 .map(([, call]) => call)
             : undefined)
-        const finalized = finalizeHermesDelegationOutput(
-          hermesDelegation,
-          fullText,
-          rawToolCalls,
-        )
-        if (hermesDelegation && finalized.text !== fullText && finalized.text) {
-          writeSse(
-            res,
-            {},
-            `data: ${JSON.stringify(createTextChunk(requestId, resolvedModel, finalized.text, isFirst))}\n\n`,
-          )
+        const finalized = hermesDelegation
+          ? finalizeHermesDelegationOutput(hermesDelegation, fullText, rawToolCalls)
+          : finalizeOpenRouterOutput(
+              openRouterCompat,
+              fullText,
+              requestBody ?? { messages: [] },
+              rawToolCalls,
+            )
+        if (openRouterCompat && finalized.toolCalls?.length) {
+          for (const [index, toolCall] of finalized.toolCalls.entries()) {
+            if (streamedToolCalls.has(index)) continue
+            writeSse(
+              res,
+              {},
+              `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "start"))}\n\n`,
+            )
+            writeSse(
+              res,
+              {},
+              `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "arguments"))}\n\n`,
+            )
+          }
+        } else if (hermesDelegation && finalized.text !== fullText && finalized.text) {
+          emitTextDelta(finalized.text.slice(fullText.length))
+          fullText = finalized.text
+        } else if (!openRouterCompat && finalized.text && finalized.text !== fullText) {
+          emitTextDelta(finalized.text.slice(fullText.length))
           fullText = finalized.text
         }
-        const finishReason = hermesDelegation
-          ? "stop"
-          : finalized.toolCalls?.length
-            ? "tool_calls"
-            : "stop"
-        const usage = buildUsage(cliUsage, prompt, finalized.text)
+
+        const finishReason = finalized.toolCalls?.length ? "tool_calls" : "stop"
+        const usage = buildUsage(cliUsage, prompt, finalized.text || fullText)
+
+        if (ctx.config.sessionResume && cursorSessionId && sessionKey) {
+          ctx.sessionStore.set(sessionKey, cursorSessionId)
+        }
 
         writeSse(
           res,
@@ -400,6 +485,8 @@ const handleStreamingResponse = async (
           model: resolvedModel,
           usage,
           tool_calls: finalized.toolCalls?.length ?? 0,
+          cursor_session: cursorSessionId,
+          resumed: Boolean(invocation.resumeSessionId),
         })
         resolve()
       })
@@ -415,3 +502,6 @@ const handleStreamingResponse = async (
       })
   })
 }
+
+const looksLikeToolCallJson = (text: string): boolean =>
+  /"tool_calls"\s*:/.test(text) || /^\s*\{/.test(text)

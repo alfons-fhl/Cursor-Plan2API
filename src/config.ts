@@ -32,8 +32,19 @@ const configSchema = z.object({
   imageModel: z.string().default("composer-2.5"),
   planFastPath: z.boolean().default(true),
   healthPublic: z.boolean().default(false),
-  /** When true, requests with OpenAI tools (Hermes) run Cursor agent mode to execute file/shell work. */
-  hermesAgentMode: z.boolean().default(true),
+  /**
+   * Client compatibility for tool-bearing requests (Hermes, OpenAI SDK).
+   * - openrouter: ask mode + OpenAI tool_calls loop (default)
+   * - delegate: Cursor agent executes file/shell work directly
+   */
+  clientCompat: z.enum(["openrouter", "delegate"]).default("openrouter"),
+  /** Reuse Cursor CLI sessions via --resume for large multi-turn prompts. */
+  sessionResume: z.boolean().default(true),
+  /** Minimum full-prompt size before `--resume` is attempted. */
+  sessionResumeMinChars: z.coerce.number().int().positive().default(12_000),
+  sessionTtlMs: z.coerce.number().int().positive().default(3_600_000),
+  /** Warm the agent binary on gateway startup. */
+  warmupOnStart: z.boolean().default(true),
 })
 
 export type ProxyConfig = z.infer<typeof configSchema>
@@ -65,5 +76,9 @@ export const loadConfig = (): ProxyConfig =>
     imageModel: env("IMAGE_MODEL"),
     planFastPath: boolFromEnv(env("PLAN_FAST"), true),
     healthPublic: boolFromEnv(env("HEALTH_PUBLIC"), false),
-    hermesAgentMode: boolFromEnv(env("HERMES_AGENT_MODE"), true),
+    clientCompat: env("CLIENT_COMPAT") === "delegate" ? "delegate" : "openrouter",
+    sessionResume: boolFromEnv(env("SESSION_RESUME"), true),
+    sessionResumeMinChars: env("SESSION_RESUME_MIN_CHARS"),
+    sessionTtlMs: env("SESSION_TTL_MS"),
+    warmupOnStart: boolFromEnv(env("WARMUP_ON_START"), true),
   })
