@@ -15,7 +15,7 @@ import { startServer } from "./server.js"
 const showHelp = (): void => {
   console.log(`Cursor-Plan2API
 
-OpenAI-compatible bridge — Cursor.ai subscription for Hermes, OpenCode & OpenAI clients.
+OpenAI-compatible bridge — Cursor.ai subscription for Hermes Agent, OpenCode & OpenAI clients.
 
 Recommended models: composer-2.5 | composer-2.5-fast | auto
 
@@ -62,8 +62,8 @@ Headers:
   X-Plan2API-Session: stable-conversation-id
 
 Clients:
-  Hermes   ~/.hermes/config.yaml → base_url http://127.0.0.1:8787/v1
-  OpenCode opencode.jsonc in repo or ~/.config/opencode/opencode.jsonc
+  Hermes Agent  ~/.hermes/config.yaml → base_url http://127.0.0.1:8787/v1
+  OpenCode      opencode.jsonc in repo or ~/.config/opencode/opencode.jsonc
 `)
 }
 

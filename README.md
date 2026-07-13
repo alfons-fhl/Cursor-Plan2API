@@ -1,35 +1,35 @@
 # 🚀 Cursor-Plan2API
 
+> **✅ Hermes Agent compatible** · **✅ OpenCode compatible** · **✅ OpenAI API compatible**
+>
 > **Use your [Cursor.ai](https://cursor.com) subscription as an OpenAI-compatible API** — locally, on your machine.
 
-## ✅ **Hermes-compatible** · ✅ **OpenCode-compatible**
-
-**Run Hermes Agent or OpenCode with your Cursor subscription** — no official Dashboard `CURSOR_API_KEY`, no third-party bridge.
+**Run [Hermes Agent](https://github.com/NousResearch/hermes-agent) or OpenCode with your Cursor subscription** — no official Dashboard `CURSOR_API_KEY`, no third-party bridge.
 
 | Client | Status | What you get |
 |--------|--------|--------------|
-| **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** | **✅ Supported** | OpenRouter-style tool loop — Hermes runs tools locally |
+| **Hermes Agent** | **✅ Supported** | OpenRouter-style tool loop — Hermes Agent runs tools locally |
 | **[OpenCode](https://opencode.ai)** | **✅ Supported** | Full agent mode — files & shell on your machine |
 | OpenAI SDK / LangChain / n8n | ✅ Supported | Standard `/v1/chat/completions` |
 
 ```text
-┌─────────────┐   POST /v1/chat/completions   ┌──────────────────┐      agent CLI       ┌─────────────┐
-│   Hermes    │ ─────────────────────────────►│ Cursor-Plan2API  │ ─────────────────────►│   Cursor    │
-│  OpenAI SDK │ ◄─────────────────────────────│  localhost:8787  │ ◄─────────────────────│  composer-2.5│
-└─────────────┘       OpenAI JSON / SSE       └──────────────────┘                      └─────────────┘
+┌────────────┐    POST /v1/chat/completions    ┌──────────────────┐   agent CLI   ┌────────────┐
+│Hermes Agent│         ─────────────►          │ Cursor-Plan2API  │   ───────►    │   Cursor   │
+│  OpenCode  │         ◄─────────────          │  localhost:8787  │   ◄───────    │composer-2.5│
+└────────────┘        OpenAI JSON / SSE        └──────────────────┘               └────────────┘
 ```
 
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-412991)]()
-[![Hermes](https://img.shields.io/badge/Hermes-compatible-7C3AED)]()
+[![Hermes Agent](https://img.shields.io/badge/Hermes%20Agent-compatible-7C3AED)]()
 [![OpenCode](https://img.shields.io/badge/OpenCode-compatible-0EA5E9)]()
 
 ---
 
 ## 🎯 Recommended models (always use these three)
 
-These are the **primary models** for Hermes, OpenCode, and API clients:
+These are the **primary models** for Hermes Agent, OpenCode, and API clients:
 
 | Model ID | Name | When to use |
 |----------|------|-------------|
@@ -38,7 +38,7 @@ These are the **primary models** for Hermes, OpenCode, and API clients:
 | `auto` | **Auto** | Let Cursor pick the model automatically |
 
 ```bash
-# Hermes
+# Hermes Agent
 hermes -z "Hello" -m composer-2.5
 hermes -z "Quick task" -m composer-2.5-fast
 hermes -z "Route me" -m auto
@@ -61,7 +61,7 @@ cursor-plan2api/auto
 
 | Feature | Description |
 |---------|-------------|
-| 🤖 **Hermes-compatible** | OpenRouter-style `tool_calls` — Hermes executes tools locally |
+| 🤖 **Hermes Agent compatible** | OpenRouter-style `tool_calls` — Hermes Agent executes tools locally |
 | 🧩 **OpenCode-compatible** | Agent mode + workspace headers — real file/shell execution |
 | 💬 **Chat Completions** | Streaming & non-streaming, real token usage from CLI |
 | 🔧 **Tool Calling** | OpenAI `tool_calls` + streaming deltas |
@@ -116,7 +116,7 @@ curl http://127.0.0.1:8787/v1/models
 cursor-plan2api
 ```
 
-### 2. Configure Hermes
+### 2. Configure Hermes Agent
 
 `~/.hermes/config.yaml` (see also [`examples/hermes-config.yaml`](examples/hermes-config.yaml)):
 
@@ -133,7 +133,7 @@ model:
 OPENAI_API_KEY=not-needed
 ```
 
-### 3. Run Hermes
+### 3. Run Hermes Agent
 
 ```bash
 hermes -z "Hello, are you connected?" -m composer-2.5
@@ -141,15 +141,15 @@ hermes -z "Fast turn" -m composer-2.5-fast
 hermes -z "Auto route" -m auto
 ```
 
-### Hermes tool modes
+### Hermes Agent tool modes
 
 | `CURSOR_PLAN2API_CLIENT_COMPAT` | Behavior |
 |----------------------------------|----------|
-| `openrouter` (default) | Ask mode — model returns `tool_calls`, **Hermes runs tools** |
+| `openrouter` (default) | Ask mode — model returns `tool_calls`, **Hermes Agent runs tools** |
 | `delegate` | Agent mode — **Cursor executes** files/shell directly |
 
 ```bash
-# Default: OpenRouter-style (Hermes tool loop)
+# Default: OpenRouter-style (Hermes Agent tool loop)
 cursor-plan2api
 
 # Optional: Cursor executes file/shell work
@@ -246,7 +246,7 @@ Live Cursor CLI models. **Recommended models appear first:**
 | `model` | string | `composer-2.5` (default), `composer-2.5-fast`, `auto`, … |
 | `messages` | array | OpenAI message format |
 | `stream` | boolean | `true` → SSE |
-| `tools` | array | OpenAI function tools (Hermes) |
+| `tools` | array | OpenAI function tools (Hermes Agent) |
 | `mode` | string | `ask` \| `plan` \| `agent` |
 
 ### Other endpoints
@@ -273,7 +273,7 @@ Live Cursor CLI models. **Recommended models appear first:**
 
 | Mode | Behavior | Best for |
 |------|----------|----------|
-| `ask` | LLM-only | **Hermes** (client runs tools) |
+| `ask` | LLM-only | **Hermes Agent** (client runs tools) |
 | `plan` | Structured plan (fast-path) | Architecture, roadmaps |
 | `agent` | Full agent — files & shell | **OpenCode**, delegate mode |
 
@@ -325,7 +325,7 @@ Cursor-Plan2API/
 ├── examples/hermes-config.yaml
 ├── src/
 │   ├── models.ts              # Recommended model IDs
-│   ├── openai/hermes-mode.ts  # Hermes / OpenCode client logic
+│   ├── openai/hermes-mode.ts  # Hermes Agent / OpenCode client logic
 │   └── cursor/session-store.ts
 └── dist/
 ```
@@ -336,7 +336,7 @@ Cursor-Plan2API/
 
 | Problem | Solution |
 |---------|----------|
-| Hermes/OpenCode can't connect | Start gateway: `cursor-plan2api` |
+| Hermes Agent / OpenCode can't connect | Start gateway: `cursor-plan2api` |
 | OpenCode shows code but no files | Use `opencode.jsonc` with `X-Cursor-Mode: agent` |
 | Model says "I'm Composer in Cursor" | Restart OpenCode (needs `X-Plan2API-Client: opencode`) |
 | Slow responses (~20s/turn) | Normal — CLI spawn overhead per request |
@@ -351,6 +351,6 @@ MIT — Not an official Cursor product.
 ---
 
 <p align="center">
-  <strong>Hermes-compatible · OpenCode-compatible · Cursor.ai subscription</strong><br>
+  <strong>Hermes Agent compatible · OpenCode compatible · OpenAI API compatible · Cursor.ai subscription</strong><br>
   <sub>Built for developers who want their Cursor sub in any OpenAI client</sub>
 </p>
