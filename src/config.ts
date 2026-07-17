@@ -34,6 +34,7 @@ const configSchema = z.object({
   imageModel: z.string().default("composer-2.5"),
   planFastPath: z.boolean().default(true),
   healthPublic: z.boolean().default(false),
+  includeModelCatalog: z.boolean().default(true),
   extraModels: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
 })
 
@@ -66,5 +67,6 @@ export const loadConfig = (): ProxyConfig =>
     imageModel: env("IMAGE_MODEL"),
     planFastPath: boolFromEnv(env("PLAN_FAST"), true),
     healthPublic: boolFromEnv(env("HEALTH_PUBLIC"), false),
+    includeModelCatalog: boolFromEnv(env("INCLUDE_MODEL_CATALOG"), true),
     extraModels: parseExtraModels(env("EXTRA_MODELS")),
   })

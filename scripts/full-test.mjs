@@ -177,7 +177,8 @@ async function runUnitTests() {
   record("isRateLimited negative", !isRateLimited("normal stderr"), null)
 
   section("UNIT: cursor/models.ts")
-  const { parseExtraModels, mergeModelLists } = await import(join(ROOT, "dist/cursor/models.js"))
+  const { parseExtraModels, mergeModelLists, resolvePublicModels } = await import(join(ROOT, "dist/cursor/models.js"))
+  const { CURSOR_MODEL_CATALOG_IDS } = await import(join(ROOT, "dist/cursor/catalog.js"))
 
   const extras = parseExtraModels("cursor-grok-4.5-high=Grok 4.5,auto,claude-opus-4-7-thinking-high=Claude Opus")
   record("parseExtraModels count", extras.length === 3, null)
@@ -190,6 +191,17 @@ async function runUnitTests() {
   )
   record("mergeModelLists count", merged.length === 2, null)
   record("mergeModelLists cli wins", merged.find((m) => m.id === "composer-2.5")?.name === "Composer 2.5", null)
+
+  const publicModels = resolvePublicModels(
+    [{ id: "composer-2.5", name: "CLI Composer" }],
+    { includeCatalog: true, extraModels: [{ id: "custom-model", name: "Custom" }] },
+  )
+  record("resolvePublicModels includes catalog", CURSOR_MODEL_CATALOG_IDS.every((id) => publicModels.some((m) => m.id === id)), null, `count=${publicModels.length}`)
+  record("resolvePublicModels includes custom", publicModels.some((m) => m.id === "custom-model"), null)
+  record("resolvePublicModels cli overrides catalog", publicModels.find((m) => m.id === "composer-2.5")?.name === "CLI Composer", null)
+
+  const catalogOff = resolvePublicModels([], { includeCatalog: false, extraModels: [] })
+  record("resolvePublicModels catalog off", catalogOff.length === 0, null)
 
   section("UNIT: concurrency.ts")
   const { RequestSemaphore } = await import(join(ROOT, "dist/concurrency.js"))

@@ -227,13 +227,23 @@ curl http://127.0.0.1:8787/v1/models
 
 Example IDs: `composer-2.5`, `auto`, `cursor-grok-4.5-high`, `claude-opus-4-7-thinking-high`, …
 
-**Extra models:** If your client only shows the 3 default Composer models from `agent --list-models`, add more via `CURSOR_PLAN2API_EXTRA_MODELS`. Chat requests already accept any model id — this only extends the model picker.
+By default the built-in **model catalog** (~25 Cursor models) is merged into this list so clients like OpenCode show more than the 3 Composer models from `agent --list-models`. Disable with `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=false`.
+
+**Extra models:** Add custom entries via `CURSOR_PLAN2API_EXTRA_MODELS` (`id` or `id=Display Name`, comma-separated).
 
 ```bash
-CURSOR_PLAN2API_EXTRA_MODELS="cursor-grok-4.5-high=Grok 4.5,claude-opus-4-7-thinking-high=Claude Opus 4.7"
+CURSOR_PLAN2API_EXTRA_MODELS="my-custom-model=Custom"
 ```
 
-Format: comma-separated `id` or `id=Display Name`.
+### Model matrix test
+
+Verify every model with every mode and stream setting (requires running server + `agent login`):
+
+```bash
+npm run test:models
+npm run test:models -- --models=composer-2.5,auto --modes=ask
+npm run test:models -- --list-only
+```
 
 ---
 
@@ -340,7 +350,8 @@ Default: `ask` — Hermes keeps tool control.
 | `CURSOR_PLAN2API_VERBOSE` | `false` | Request logging |
 | `CURSOR_PLAN2API_EMBEDDING_PROVIDER` | `semantic` | `semantic` or `local` |
 | `CURSOR_PLAN2API_PLAN_FAST` | `true` | Fast plan mode shortcut |
-| `CURSOR_PLAN2API_EXTRA_MODELS` | — | Extra models for `GET /v1/models` (`id` or `id=Name`, comma-separated) |
+| `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG` | `true` | Merge built-in Cursor model catalog into `/v1/models` |
+| `CURSOR_PLAN2API_EXTRA_MODELS` | — | Additional models (`id` or `id=Name`, comma-separated) |
 | `CURSOR_PLAN2API_HEALTH_PUBLIC` | `false` | Allow `/health` without auth |
 | `CURSOR_PLAN2API_TIMEOUT_MS` | `300000` | CLI timeout (5 min) |
 | `CURSOR_PLAN2API_AGENT_BIN` | `agent` | Path to Cursor CLI |
@@ -355,7 +366,7 @@ CURSOR_PLAN2API_DEFAULT_MODEL=composer-2.5
 CURSOR_PLAN2API_MODE=ask
 CURSOR_PLAN2API_EMBEDDING_PROVIDER=semantic
 CURSOR_PLAN2API_PLAN_FAST=true
-CURSOR_PLAN2API_EXTRA_MODELS=cursor-grok-4.5-high=Grok 4.5
+CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=true
 ```
 
 ---
