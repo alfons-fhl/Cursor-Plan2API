@@ -42,6 +42,7 @@ Environment:
   CURSOR_PLAN2API_PLAN_FAST=true
   CURSOR_PLAN2API_HEALTH_PUBLIC=false
   CURSOR_PLAN2API_API_KEY=            Optional local bearer token
+  CURSOR_PLAN2API_EXTRA_MODELS=        Comma-separated extra model ids for /v1/models
   CURSOR_PLAN2API_TIMEOUT_MS=300000
   CURSOR_PLAN2API_AGENT_BIN=agent
 
@@ -85,6 +86,9 @@ const runForeground = async (): Promise<void> => {
   console.log(`  auth          cursor-cli subscription (agent login)`)
   console.log(`  cli version   ${check.version ?? "unknown"}`)
   console.log(`  default model ${config.defaultModel}`)
+  if (config.extraModels.length > 0) {
+    console.log(`  extra models  ${config.extraModels.map((m) => m.id).join(", ")}`)
+  }
   console.log(`  mode          ${config.agentMode}`)
   console.log(`  base url      ${baseUrl}/v1`)
   console.log(`  health        ${baseUrl}/health`)

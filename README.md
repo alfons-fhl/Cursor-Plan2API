@@ -219,13 +219,21 @@ curl http://127.0.0.1:8787/health
 
 ### `GET /v1/models`
 
-Lists all Cursor CLI models live (+ embedding models).
+Lists Cursor CLI models live, plus any configured extras (+ embedding models).
 
 ```bash
 curl http://127.0.0.1:8787/v1/models
 ```
 
-Example IDs: `composer-2.5`, `auto`, `gpt-5.2`, `claude-sonnet-5-thinking-high`, …
+Example IDs: `composer-2.5`, `auto`, `cursor-grok-4.5-high`, `claude-opus-4-7-thinking-high`, …
+
+**Extra models:** If your client only shows the 3 default Composer models from `agent --list-models`, add more via `CURSOR_PLAN2API_EXTRA_MODELS`. Chat requests already accept any model id — this only extends the model picker.
+
+```bash
+CURSOR_PLAN2API_EXTRA_MODELS="cursor-grok-4.5-high=Grok 4.5,claude-opus-4-7-thinking-high=Claude Opus 4.7"
+```
+
+Format: comma-separated `id` or `id=Display Name`.
 
 ---
 
@@ -332,6 +340,7 @@ Default: `ask` — Hermes keeps tool control.
 | `CURSOR_PLAN2API_VERBOSE` | `false` | Request logging |
 | `CURSOR_PLAN2API_EMBEDDING_PROVIDER` | `semantic` | `semantic` or `local` |
 | `CURSOR_PLAN2API_PLAN_FAST` | `true` | Fast plan mode shortcut |
+| `CURSOR_PLAN2API_EXTRA_MODELS` | — | Extra models for `GET /v1/models` (`id` or `id=Name`, comma-separated) |
 | `CURSOR_PLAN2API_HEALTH_PUBLIC` | `false` | Allow `/health` without auth |
 | `CURSOR_PLAN2API_TIMEOUT_MS` | `300000` | CLI timeout (5 min) |
 | `CURSOR_PLAN2API_AGENT_BIN` | `agent` | Path to Cursor CLI |
@@ -346,6 +355,7 @@ CURSOR_PLAN2API_DEFAULT_MODEL=composer-2.5
 CURSOR_PLAN2API_MODE=ask
 CURSOR_PLAN2API_EMBEDDING_PROVIDER=semantic
 CURSOR_PLAN2API_PLAN_FAST=true
+CURSOR_PLAN2API_EXTRA_MODELS=cursor-grok-4.5-high=Grok 4.5
 ```
 
 ---

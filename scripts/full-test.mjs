@@ -176,6 +176,21 @@ async function runUnitTests() {
   record("isRateLimited rate limit", isRateLimited("rate limit exceeded"), null)
   record("isRateLimited negative", !isRateLimited("normal stderr"), null)
 
+  section("UNIT: cursor/models.ts")
+  const { parseExtraModels, mergeModelLists } = await import(join(ROOT, "dist/cursor/models.js"))
+
+  const extras = parseExtraModels("cursor-grok-4.5-high=Grok 4.5,auto,claude-opus-4-7-thinking-high=Claude Opus")
+  record("parseExtraModels count", extras.length === 3, null)
+  record("parseExtraModels id+name", extras[0]?.id === "cursor-grok-4.5-high" && extras[0]?.name === "Grok 4.5", null)
+  record("parseExtraModels id-only name", extras[1]?.id === "auto" && extras[1]?.name === "auto", null)
+
+  const merged = mergeModelLists(
+    [{ id: "composer-2.5", name: "Composer 2.5" }],
+    [{ id: "cursor-grok-4.5-high", name: "Grok 4.5" }, { id: "composer-2.5", name: "Override" }],
+  )
+  record("mergeModelLists count", merged.length === 2, null)
+  record("mergeModelLists cli wins", merged.find((m) => m.id === "composer-2.5")?.name === "Composer 2.5", null)
+
   section("UNIT: concurrency.ts")
   const { RequestSemaphore } = await import(join(ROOT, "dist/concurrency.js"))
   const sem = new RequestSemaphore(2)
