@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { parseExtraModels } from "./cursor/models.js"
+
 const boolFromEnv = (value: string | undefined, defaultValue: boolean): boolean => {
   if (value === undefined || value.trim() === "") return defaultValue
   return !["0", "false", "no", "off"].includes(value.trim().toLowerCase())
@@ -32,6 +34,8 @@ const configSchema = z.object({
   imageModel: z.string().default("composer-2.5"),
   planFastPath: z.boolean().default(true),
   healthPublic: z.boolean().default(false),
+  includeModelCatalog: z.boolean().default(true),
+  extraModels: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
 })
 
 export type ProxyConfig = z.infer<typeof configSchema>
@@ -63,4 +67,6 @@ export const loadConfig = (): ProxyConfig =>
     imageModel: env("IMAGE_MODEL"),
     planFastPath: boolFromEnv(env("PLAN_FAST"), true),
     healthPublic: boolFromEnv(env("HEALTH_PUBLIC"), false),
+    includeModelCatalog: boolFromEnv(env("INCLUDE_MODEL_CATALOG"), true),
+    extraModels: parseExtraModels(env("EXTRA_MODELS")),
   })

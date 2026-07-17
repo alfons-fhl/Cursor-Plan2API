@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 import type { ProxyConfig } from "../config.js"
 import type { RequestSemaphore } from "../concurrency.js"
 import { listCursorModels } from "../cursor/cli.js"
+import { mergeModelLists, resolvePublicModels } from "../cursor/models.js"
 import { CursorAgentRunner } from "../cursor/runner.js"
 import { resolveRequestMode, resolveWorkspace } from "../cursor/workspace.js"
 import { resolveExecutionMode } from "../openai/plan-mode.js"
@@ -51,6 +52,8 @@ export const handleHealth = (
     auth: "cursor-cli-subscription",
     cli_version: ctx.cliVersion ?? "unknown",
     default_model: ctx.config.defaultModel,
+    extra_models: ctx.config.extraModels.length,
+    model_catalog: ctx.config.includeModelCatalog,
     mode: ctx.config.agentMode,
     plan_fast_path: ctx.config.planFastPath,
     embedding_provider: ctx.config.embeddingProvider,
@@ -80,7 +83,11 @@ export const handleModels = async (
   }
 
   try {
-    const models = await listCursorModels(ctx.config)
+    const cliModels = await listCursorModels(ctx.config)
+    const models = resolvePublicModels(cliModels, {
+      includeCatalog: ctx.config.includeModelCatalog,
+      extraModels: ctx.config.extraModels,
+    })
     sendJson(res, 200, {
       object: "list",
       data: [
