@@ -28,6 +28,7 @@ export type OpenAiChatRequest = {
   tool_choice?: unknown
   functions?: Array<Record<string, unknown>>
   mode?: "ask" | "plan" | "agent"
+  reasoning_effort?: string
 }
 
 export type OpenAiChatResponse = {
@@ -40,6 +41,7 @@ export type OpenAiChatResponse = {
     message: {
       role: "assistant"
       content: string | null
+      reasoning_content?: string | null
       tool_calls?: OpenAiToolCall[]
     }
     finish_reason: "stop" | "tool_calls" | null
@@ -61,6 +63,7 @@ export type OpenAiChatChunk = {
     delta: {
       role?: "assistant"
       content?: string
+      reasoning_content?: string
       tool_calls?: Array<{
         index: number
         id?: string

@@ -64,6 +64,11 @@ cursor-plan2api/auto
 | 🤖 **Hermes Agent compatible** | OpenRouter-style `tool_calls` — Hermes Agent executes tools locally |
 | 🧩 **OpenCode-compatible** | Agent mode + workspace headers — real file/shell execution |
 | 💬 **Chat Completions** | Streaming & non-streaming, real token usage from CLI |
+| 🧾 **Responses API** | `POST /v1/responses` for Cursor IDE & newer OpenAI SDK clients |
+| 👁️ **Vision / Multimodal** | Base64 `image_url` parts saved to temp files and passed to CLI |
+| 🧠 **Reasoning passthrough** | `reasoning_content` SSE deltas from CLI thinking blocks |
+| 🐳 **Docker** | `Dockerfile` + `docker-compose.yml` with `~/.cursor` auth mount |
+| ⚡ **Agent pool** | Optional warm CLI slots (`CURSOR_PLAN2API_AGENT_POOL=1`) |
 | 🔧 **Tool Calling** | OpenAI `tool_calls` + streaming deltas |
 | 🧠 **Embeddings** | Semantic vectors via `all-MiniLM-L6-v2` |
 | 🎨 **Image Generation** | Native Cursor `generateImageToolCall` |
@@ -313,6 +318,19 @@ See [Model catalog & `/v1/models`](#-model-catalog--v1models) for merge rules, e
 | `stream` | boolean | `true` → SSE |
 | `tools` | array | OpenAI function tools (Hermes Agent) |
 | `mode` | string | `ask` \| `plan` \| `agent` |
+| `reasoning_effort` | string | Emit `reasoning_content` / thinking deltas when set |
+
+### `POST /v1/responses`
+
+OpenAI Responses API compatible endpoint. Maps `input` and `instructions` to the same Cursor CLI runner as chat completions.
+
+```bash
+curl -s http://127.0.0.1:8787/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{"model":"composer-2.5","input":"Say hello"}'
+```
+
+Supports `stream: true` (SSE events: `response.created`, `response.output_text.delta`, `response.completed`).
 
 ### Other endpoints
 
@@ -354,12 +372,32 @@ See [Model catalog & `/v1/models`](#-model-catalog--v1models) for merge rules, e
 | `CURSOR_PLAN2API_CLIENT_COMPAT` | `openrouter` | `openrouter` or `delegate` |
 | `CURSOR_PLAN2API_SESSION_RESUME` | `true` | Cursor CLI `--resume` |
 | `CURSOR_PLAN2API_WARMUP_ON_START` | `true` | Warm agent binary on start |
+| `CURSOR_PLAN2API_AGENT_POOL` | `false` | Keep warm CLI slots between requests |
+| `CURSOR_PLAN2API_AGENT_POOL_SIZE` | `2` | Number of warm slots when pool enabled |
 | `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG` | `true` | Merge built-in model catalog into `/v1/models` |
 | `CURSOR_PLAN2API_EXTRA_MODELS` | — | Additional models (`id` or `id=Name`, comma-separated) |
 | `CURSOR_PLAN2API_API_KEY` | — | Optional bearer token |
 | `CURSOR_PLAN2API_VERBOSE` | `false` | Request logging |
 
 See full list in source [`src/config.ts`](src/config.ts).
+
+---
+
+## 🐳 Docker
+
+Run on a server or NAS with Cursor CLI auth mounted from the host:
+
+```bash
+# Log in on the host first
+agent login
+
+# Build and start
+docker compose up -d --build
+
+curl http://127.0.0.1:8787/health
+```
+
+`docker-compose.yml` mounts `${HOME}/.cursor` read-only for CLI subscription auth. Set `CURSOR_PLAN2API_AGENT_POOL=1` in compose to reduce cold-start latency.
 
 ---
 
@@ -447,7 +485,7 @@ Cursor-Plan2API/
 | Hermes Agent / OpenCode can't connect | Start gateway: `cursor-plan2api` |
 | OpenCode shows code but no files | Use `opencode.jsonc` with `X-Cursor-Mode: agent` |
 | Model says "I'm Composer in Cursor" | Restart OpenCode (needs `X-Plan2API-Client: opencode`) |
-| Slow responses (~20s/turn) | Normal — CLI spawn overhead per request |
+| Slow responses (~20s/turn) | Enable `CURSOR_PLAN2API_AGENT_POOL=1` and session resume; CLI spawn overhead remains per request |
 | `agent login` required | `curl https://cursor.com/install -fsS \| bash && agent login` |
 | Fable model: data policy error | Accept Cursor data retention policy, or use `--skip-fable` in tests |
 | OpenCode shows only 3 models | Restart gateway; ensure `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=true` (default) |

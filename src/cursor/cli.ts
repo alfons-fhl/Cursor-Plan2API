@@ -99,6 +99,7 @@ type RunResult = {
   code: number | null
   stdout: string
   stderr: string
+  spawnMs: number
 }
 
 /**
@@ -110,6 +111,7 @@ export const runAgentCommand = (
   options: RunOptions,
 ): Promise<RunResult> =>
   new Promise((resolve, reject) => {
+    const spawnStartedAt = Date.now()
     const child = spawn(config.agentBin, args, {
       cwd: options.cwd ?? process.cwd(),
       env: {
@@ -125,6 +127,14 @@ export const runAgentCommand = (
     let stdout = ""
     let stderr = ""
     let timedOut = false
+    let spawnMs = 0
+
+    child.on("spawn", () => {
+      spawnMs = Date.now() - spawnStartedAt
+      if (config.verboseLogging) {
+        console.log(`[cli] spawned in ${spawnMs}ms`)
+      }
+    })
 
     const timer = setTimeout(() => {
       timedOut = true
@@ -162,7 +172,7 @@ export const runAgentCommand = (
         reject(new Error(`Cursor CLI timed out after ${options.timeoutMs}ms`))
         return
       }
-      resolve({ code, stdout, stderr })
+      resolve({ code, stdout, stderr, spawnMs })
     })
 
     if (options.stdin !== undefined) {
@@ -207,7 +217,7 @@ export const runAgentCommandWithRetry = async (
     })
   }
 
-  return lastResult ?? { code: 1, stdout: "", stderr: "Rate limited" }
+  return lastResult ?? { code: 1, stdout: "", stderr: "Rate limited", spawnMs: 0 }
 }
 
 export type AgentInvocation = {
@@ -220,6 +230,8 @@ export type AgentInvocation = {
   suppressNativeToolCalls?: boolean
   /** Cursor CLI session id for `--resume` follow-ups. */
   resumeSessionId?: string
+  /** Emit thinking/reasoning deltas from stream-json output. */
+  emitReasoning?: boolean
 }
 
 /**

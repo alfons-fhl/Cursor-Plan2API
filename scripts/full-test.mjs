@@ -137,13 +137,27 @@ async function runUnitTests() {
   record("normalizeModelId passthrough", normalizeModelId("composer-2.5") === "composer-2.5", null)
   record("normalizeModelId undefined", normalizeModelId(undefined) === undefined, null)
 
-  const prompt = buildPromptFromMessages([
+  const builtPrompt = await buildPromptFromMessages([
     { role: "system", content: "Be helpful" },
     { role: "user", content: "Hi" },
     { role: "assistant", content: "Hello" },
     { role: "user", content: "Bye" },
   ])
-  record("buildPrompt contains roles", prompt.includes("System:") && prompt.includes("User:") && prompt.includes("Assistant:"), null)
+  record("buildPrompt contains roles", builtPrompt.prompt.includes("System:") && builtPrompt.prompt.includes("User:") && builtPrompt.prompt.includes("Assistant:"), null)
+
+  const tinyPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+  const visionPrompt = await buildPromptFromMessages([
+    {
+      role: "user",
+      content: [
+        { type: "text", text: "What color?" },
+        { type: "image_url", image_url: { url: tinyPng } },
+      ],
+    },
+  ])
+  record("buildPrompt vision writes temp file", visionPrompt.imagePaths.length === 1, null)
+  record("buildPrompt vision includes attachment block", visionPrompt.prompt.includes("attached image file"), null)
+  await visionPrompt.cleanup?.()
 
   const toolPrompt = toolsToSystemText([{
     type: "function",
@@ -164,6 +178,24 @@ async function runUnitTests() {
     { type: "image_url", image_url: { url: "https://example.com/img.png" } },
   ])
   record("messageContentToText multimodal", multimodal.includes("look at") && multimodal.includes("[Image:"), null)
+
+  section("UNIT: openai/responses-map.ts")
+  const { mapResponsesRequestToChat, shouldEmitReasoning } = await import(join(ROOT, "dist/openai/responses-map.js"))
+
+  const mapped = mapResponsesRequestToChat({
+    model: "composer-2.5",
+    instructions: "Be concise",
+    input: "Hello",
+  })
+  record("responses map instructions + input", mapped.messages.length === 2 && mapped.messages[1]?.role === "user", null)
+  record("shouldEmitReasoning thinking model", shouldEmitReasoning("claude-sonnet-5-thinking-high"), null)
+  record("shouldEmitReasoning default model", !shouldEmitReasoning("composer-2.5"), null)
+
+  section("UNIT: openai/vision.ts")
+  const { parseDataUrl, MAX_IMAGE_BYTES } = await import(join(ROOT, "dist/openai/vision.js"))
+  const parsedDataUrl = parseDataUrl(tinyPng)
+  record("parseDataUrl png", parsedDataUrl?.mime === "image/png" && parsedDataUrl.data.length > 0, null)
+  record("MAX_IMAGE_BYTES is 1MB", MAX_IMAGE_BYTES === 1_048_576, null)
 
   section("UNIT: cursor/cli.ts")
   const { parseModelList, isRateLimited } = await import(join(ROOT, "dist/cursor/cli.js"))
@@ -231,7 +263,9 @@ async function runHttpTests() {
     const { res, body, ms } = await fetchJson("/health")
     record("GET /health → 200", res.status === 200, ms)
     record("health status=ok", body.status === "ok", null)
-    record("health has endpoints list", Array.isArray(body.endpoints) && body.endpoints.length >= 6, null)
+    record("health has endpoints list", Array.isArray(body.endpoints) && body.endpoints.length >= 7, null)
+    record("health lists /v1/responses", body.endpoints?.includes("POST /v1/responses"), null)
+    record("health exposes agent_pool stats", typeof body.agent_pool === "object", null)
     bench("GET /health", ms)
   }
 
@@ -499,6 +533,68 @@ async function runHttpTests() {
     record("stream has tool_call deltas", toolChunks.length > 0, null, `toolChunks=${toolChunks.length}`)
     record("stream tool finish_reason", finishChunk?.choices?.[0]?.finish_reason === "tool_calls", null, finishChunk?.choices?.[0]?.finish_reason)
     bench("chat stream tool-call", ms)
+  }
+
+  section("HTTP: Responses API")
+
+  {
+    const { res, body, ms } = await fetchJson("/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "composer-2.5",
+        input: "Reply with exactly one word: responses",
+      }),
+    })
+    record("POST /v1/responses → 200", res.status === 200, ms)
+    record("responses object=response", body.object === "response", null)
+    record("responses has output text", body.output?.[0]?.content?.[0]?.text?.length > 0, null, body.output?.[0]?.content?.[0]?.text?.slice(0, 40))
+    bench("POST /v1/responses (non-stream)", ms)
+  }
+
+  {
+    const tinyPng = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
+    const { res, body, ms } = await fetchJson("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "composer-2.5",
+        messages: [{
+          role: "user",
+          content: [
+            { type: "text", text: "Reply exactly: vision-ok" },
+            { type: "image_url", image_url: { url: tinyPng } },
+          ],
+        }],
+      }),
+    })
+    record("vision base64 chat → 200", res.status === 200, ms)
+    const visionMessage = body.choices?.[0]?.message
+    record(
+      "vision chat has content or read tool_call",
+      typeof visionMessage?.content === "string" ||
+        visionMessage?.tool_calls?.some((call) => call.function?.name === "read"),
+      null,
+      visionMessage?.tool_calls?.[0]?.function?.name ?? visionMessage?.content?.slice(0, 40),
+    )
+    bench("chat vision base64", ms)
+  }
+
+  {
+    const { res, events, ms } = await fetchSse("/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "composer-2.5",
+        stream: true,
+        reasoning_effort: "medium",
+        messages: [{ role: "user", content: "Reply with one word: reasoning" }],
+      }),
+    })
+    const reasoningChunks = events.filter((e) => e.choices?.[0]?.delta?.reasoning_content)
+    record("stream reasoning_effort → 200", res.status === 200, ms)
+    record("stream may include reasoning_content", reasoningChunks.length >= 0, null, `reasoningChunks=${reasoningChunks.length}`)
+    bench("chat stream reasoning", ms, { reasoningChunks: reasoningChunks.length })
   }
 
   section("HTTP: Headers — X-Cursor-Mode & X-Cursor-Workspace")

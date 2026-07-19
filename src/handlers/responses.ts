@@ -1,12 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 
 import type { ProxyConfig } from "../config.js"
-import type { RequestSemaphore } from "../concurrency.js"
 import type { AgentWarmPool } from "../cursor/agent-pool.js"
+import type { RequestSemaphore } from "../concurrency.js"
 import { CursorSessionStore, buildResumePrompt, canResumeSession } from "../cursor/session-store.js"
-import { listCursorModels } from "../cursor/cli.js"
-import { resolvePublicModels } from "../cursor/models.js"
-import { RECOMMENDED_MODELS, sortModelsWithRecommendedFirst } from "../models.js"
 import { CursorAgentRunner } from "../cursor/runner.js"
 import { resolveRequestMode, resolveAgentWorkspace, resolveWorkspace } from "../cursor/workspace.js"
 import {
@@ -22,19 +19,17 @@ import {
   parseToolCallsFromText,
 } from "../openai/prompt.js"
 import {
-  createChatResponse,
-  createFinishChunk,
-  createReasoningChunk,
-  createRequestId,
-  createTextChunk,
-  createToolCallChunk,
-} from "../openai/response.js"
-import { shouldEmitReasoning } from "../openai/responses-map.js"
+  createResponsesResponse,
+  mapResponsesRequestToChat,
+  shouldEmitReasoning,
+} from "../openai/responses-map.js"
+import type { ResponsesRequest } from "../openai/responses-types.js"
+import { createRequestId } from "../openai/response.js"
 import { buildUsage } from "../openai/tokens.js"
-import type { OpenAiChatRequest, OpenAiToolCall } from "../openai/types.js"
+import type { OpenAiChatRequest } from "../openai/types.js"
 import { logRequest, logResponse } from "../request-log.js"
 import { readJsonBody, writeSse, endSse } from "./http.js"
-import { authorize, authorizeHealth, sendError } from "./shared.js"
+import { authorize, sendError } from "./shared.js"
 import { sendJson } from "./http.js"
 
 type HandlerContext = {
@@ -45,108 +40,15 @@ type HandlerContext = {
   agentPool?: AgentWarmPool
 }
 
-/**
- * Handle GET /health.
- */
-export const handleHealth = (
-  req: IncomingMessage,
-  res: ServerResponse,
-  ctx: HandlerContext,
-): void => {
-  if (!authorizeHealth(req, ctx.config)) {
-    sendError(res, 401, "Invalid bridge API key", "authentication_error")
-    return
-  }
-
-  sendJson(res, 200, {
-    status: "ok",
-    provider: "Cursor-Plan2API",
-    auth: "cursor-cli-subscription",
-    cli_version: ctx.cliVersion ?? "unknown",
-    default_model: ctx.config.defaultModel,
-    extra_models: ctx.config.extraModels.length,
-    model_catalog: ctx.config.includeModelCatalog,
-    mode: ctx.config.agentMode,
-    plan_fast_path: ctx.config.planFastPath,
-    hermes_agent_mode: ctx.config.clientCompat === "delegate",
-    client_compat: ctx.config.clientCompat,
-    session_resume: ctx.config.sessionResume,
-    cached_sessions: ctx.sessionStore.size(),
-    recommended_models: RECOMMENDED_MODELS.map((model) => model.id),
-    embedding_provider: ctx.config.embeddingProvider,
-    agent_pool: ctx.agentPool?.getStats() ?? { enabled: false },
-    endpoints: [
-      "GET /health",
-      "GET /v1/models",
-      "GET /v1/usage",
-      "POST /v1/chat/completions",
-      "POST /v1/responses",
-      "POST /v1/embeddings",
-      "POST /v1/images/generations",
-    ],
-    timestamp: new Date().toISOString(),
-  })
-}
+const resolveModel = (
+  requested: string | undefined,
+  config: ProxyConfig,
+): string => normalizeModelId(requested) ?? config.defaultModel
 
 /**
- * Handle GET /v1/models.
+ * Handle POST /v1/responses (OpenAI Responses API compatible).
  */
-export const handleModels = async (
-  req: IncomingMessage,
-  res: ServerResponse,
-  ctx: HandlerContext,
-): Promise<void> => {
-  if (!authorize(req, ctx.config)) {
-    sendError(res, 401, "Invalid bridge API key", "authentication_error")
-    return
-  }
-
-  try {
-    const cliModels = await listCursorModels(ctx.config)
-    const models = sortModelsWithRecommendedFirst(
-      resolvePublicModels(cliModels, {
-        includeCatalog: ctx.config.includeModelCatalog,
-        extraModels: ctx.config.extraModels,
-      }),
-    )
-    sendJson(res, 200, {
-      object: "list",
-      recommended: RECOMMENDED_MODELS,
-      data: [
-        ...models.map((model) => ({
-          id: model.id,
-          object: "model",
-          created: Math.floor(Date.now() / 1000),
-          owned_by: "cursor",
-        })),
-        {
-          id: "text-embedding-plan2api-semantic",
-          object: "model",
-          created: Math.floor(Date.now() / 1000),
-          owned_by: "Cursor-Plan2API",
-        },
-        {
-          id: "text-embedding-plan2api-local",
-          object: "model",
-          created: Math.floor(Date.now() / 1000),
-          owned_by: "Cursor-Plan2API",
-        },
-      ],
-    })
-  } catch (error) {
-    sendError(
-      res,
-      500,
-      error instanceof Error ? error.message : "Failed to list models",
-      "server_error",
-    )
-  }
-}
-
-/**
- * Handle POST /v1/chat/completions.
- */
-export const handleChatCompletions = async (
+export const handleResponses = async (
   req: IncomingMessage,
   res: ServerResponse,
   ctx: HandlerContext,
@@ -158,9 +60,9 @@ export const handleChatCompletions = async (
     return
   }
 
-  let body: OpenAiChatRequest
+  let body: ResponsesRequest
   try {
-    body = (await readJsonBody(req)) as OpenAiChatRequest
+    body = (await readJsonBody(req)) as ResponsesRequest
   } catch (error) {
     sendError(
       res,
@@ -170,20 +72,32 @@ export const handleChatCompletions = async (
     return
   }
 
-  if (!Array.isArray(body.messages) || body.messages.length === 0) {
-    sendError(res, 400, "messages must be a non-empty array")
+  const mapped = mapResponsesRequestToChat(body)
+  if (mapped.messages.length === 0) {
+    sendError(res, 400, "input must contain at least one message")
     return
   }
 
+  const chatBody: OpenAiChatRequest = {
+    model: mapped.model,
+    messages: mapped.messages,
+    stream: mapped.stream,
+    user: mapped.user,
+    tools: mapped.tools,
+    mode: mapped.mode,
+    reasoning_effort: mapped.reasoningEffort,
+  }
+
   const requestId = createRequestId()
-  const model = resolveModel(body.model, ctx.config)
+  const responseId = `resp_${requestId}`
+  const model = resolveModel(chatBody.model, ctx.config)
 
   let requestedMode: ProxyConfig["agentMode"]
   try {
     requestedMode = resolveRequestMode(
       ctx.config,
       req.headers["x-cursor-mode"],
-      body.mode,
+      chatBody.mode,
     )
   } catch (error) {
     sendError(
@@ -197,12 +111,12 @@ export const handleChatCompletions = async (
   const execution = resolveHermesExecution(
     ctx.config,
     requestedMode,
-    body,
+    chatBody,
     resolvePlan2ApiClient(req.headers),
   )
 
   const toolsText = execution.injectToolsAsPrompt
-    ? toolsToOpenRouterSystemText(body.tools, body.functions)
+    ? toolsToOpenRouterSystemText(chatBody.tools, chatBody.functions)
     : undefined
   const systemParts: Array<{ role: "system"; content: string }> = []
   if (execution.systemPrompt) {
@@ -215,7 +129,7 @@ export const handleChatCompletions = async (
     systemParts.push({ role: "system", content: toolsText })
   }
 
-  const messages = [...systemParts, ...body.messages]
+  const messages = [...systemParts, ...chatBody.messages]
   let promptCleanup: (() => Promise<void>) | undefined
   let fullPrompt = ""
   let prompt = ""
@@ -225,16 +139,16 @@ export const handleChatCompletions = async (
     fullPrompt = built.prompt
     promptCleanup = built.cleanup
 
-    const sessionKey = ctx.sessionStore.resolveKey(req, body, model)
+    const sessionKey = ctx.sessionStore.resolveKey(req, chatBody, model)
     const resumeEligible =
       ctx.config.sessionResume &&
       fullPrompt.length >= ctx.config.sessionResumeMinChars &&
-      canResumeSession(body.messages)
+      canResumeSession(chatBody.messages)
     const resumeSessionId = resumeEligible
       ? ctx.sessionStore.get(sessionKey)
       : undefined
     const resumePrompt = resumeSessionId
-      ? buildResumePrompt(body.messages)
+      ? buildResumePrompt(chatBody.messages)
       : null
     prompt =
       resumeSessionId && resumePrompt
@@ -253,12 +167,15 @@ export const handleChatCompletions = async (
             execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : false,
           )
     const runner = new CursorAgentRunner(ctx.config)
-    const emitReasoning = shouldEmitReasoning(model, body.reasoning_effort)
+    const emitReasoning = shouldEmitReasoning(
+      model,
+      chatBody.reasoning_effort ?? mapped.reasoningEffort,
+    )
 
     const invocation = {
       model,
       prompt,
-      stream: body.stream === true,
+      stream: chatBody.stream === true,
       mode: execution.cliMode,
       workspaceDir: workspace.workspaceDir,
       suppressNativeToolCalls: execution.hermesDelegation,
@@ -266,20 +183,12 @@ export const handleChatCompletions = async (
       emitReasoning,
     }
 
-    logRequest(ctx.config.verboseLogging, "POST", "/v1/chat/completions", {
+    logRequest(ctx.config.verboseLogging, "POST", "/v1/responses", {
       id: requestId,
       model,
-      requested_mode: requestedMode,
-      cli_mode: execution.cliMode,
-      hermes_delegation: execution.hermesDelegation,
-      openrouter_compat: execution.openRouterCompat,
-      plan_fast_path: execution.planSystemPrompt !== undefined,
       stream: invocation.stream,
       emit_reasoning: emitReasoning,
-      session_resume: Boolean(resumeSessionId),
       prompt_chars: prompt.length,
-      full_prompt_chars: fullPrompt.length,
-      image_attachments: built.imagePaths.length,
     })
 
     await ctx.agentPool?.ensureWarm()
@@ -287,18 +196,19 @@ export const handleChatCompletions = async (
 
     try {
       if (invocation.stream) {
-        await handleStreamingResponse(
+        await handleResponsesStreaming(
           res,
           runner,
           invocation,
           requestId,
+          responseId,
           model,
           prompt,
           ctx,
           startedAt,
           execution.hermesDelegation,
           execution.openRouterCompat,
-          body,
+          chatBody,
           sessionKey,
         )
         return
@@ -308,6 +218,7 @@ export const handleChatCompletions = async (
       if (ctx.config.sessionResume && result.sessionId) {
         ctx.sessionStore.set(sessionKey, result.sessionId)
       }
+
       const rawToolCalls = result.toolCalls ?? parseToolCallsFromText(result.text)
       const finalized = execution.hermesDelegation
         ? finalizeHermesDelegationOutput(
@@ -318,7 +229,7 @@ export const handleChatCompletions = async (
         : finalizeOpenRouterOutput(
             execution.openRouterCompat,
             result.text,
-            body,
+            chatBody,
             rawToolCalls,
           )
       const usage = buildUsage(result.usage, prompt, finalized.text)
@@ -326,22 +237,19 @@ export const handleChatCompletions = async (
       sendJson(
         res,
         200,
-        createChatResponse(
-          requestId,
+        createResponsesResponse(
+          responseId,
           result.model || model,
           finalized.text,
-          finalized.toolCalls,
           usage,
           result.reasoningText,
+          finalized.toolCalls,
         ),
       )
 
       logResponse(ctx.config.verboseLogging, requestId, 200, Date.now() - startedAt, {
         model: result.model || model,
         usage,
-        tool_calls: finalized.toolCalls?.length ?? 0,
-        cursor_session: result.sessionId,
-        resumed: Boolean(resumeSessionId),
       })
     } catch (error) {
       sendError(
@@ -366,16 +274,12 @@ export const handleChatCompletions = async (
   }
 }
 
-const resolveModel = (
-  requested: string | undefined,
-  config: ProxyConfig,
-): string => normalizeModelId(requested) ?? config.defaultModel
-
-const handleStreamingResponse = async (
+const handleResponsesStreaming = async (
   res: ServerResponse,
   runner: CursorAgentRunner,
   invocation: Parameters<CursorAgentRunner["runSyncJson"]>[0],
   requestId: string,
+  responseId: string,
   model: string,
   prompt: string,
   ctx: HandlerContext,
@@ -389,13 +293,13 @@ const handleStreamingResponse = async (
     "X-Request-Id": requestId,
   })
 
-  let isFirst = true
   let closed = false
   let fullText = ""
+  let reasoningText = ""
   let resolvedModel = model
   let cliUsage: Parameters<typeof buildUsage>[0]
   let cursorSessionId: string | undefined
-  const streamedToolCalls = new Map<number, OpenAiToolCall>()
+  const itemId = `msg_${responseId}`
 
   const closeStream = (): void => {
     if (closed) return
@@ -403,6 +307,21 @@ const handleStreamingResponse = async (
     writeSse(res, {}, "data: [DONE]\n\n")
     endSse(res)
   }
+
+  writeSse(
+    res,
+    {},
+    `event: response.created\ndata: ${JSON.stringify({
+      type: "response.created",
+      response: {
+        id: responseId,
+        object: "response",
+        created_at: Math.floor(Date.now() / 1000),
+        model,
+        status: "in_progress",
+      },
+    })}\n\n`,
+  )
 
   await new Promise<void>((resolve) => {
     const finish = (): void => {
@@ -416,17 +335,29 @@ const handleStreamingResponse = async (
       writeSse(
         res,
         {},
-        `data: ${JSON.stringify(createTextChunk(requestId, resolvedModel, text, isFirst))}\n\n`,
+        `event: response.output_text.delta\ndata: ${JSON.stringify({
+          type: "response.output_text.delta",
+          item_id: itemId,
+          output_index: 0,
+          content_index: 0,
+          delta: text,
+        })}\n\n`,
       )
-      isFirst = false
     }
 
     runner.on("reasoning", ({ text }) => {
       if (!text) return
+      reasoningText += text
       writeSse(
         res,
         {},
-        `data: ${JSON.stringify(createReasoningChunk(requestId, resolvedModel, text))}\n\n`,
+        `event: response.reasoning_text.delta\ndata: ${JSON.stringify({
+          type: "response.reasoning_text.delta",
+          item_id: itemId,
+          output_index: 0,
+          content_index: 0,
+          delta: text,
+        })}\n\n`,
       )
     })
 
@@ -435,44 +366,12 @@ const handleStreamingResponse = async (
       emitTextDelta(text)
     })
 
-    runner.on("toolCall", ({ toolCall, index }) => {
-      if (hermesDelegation || openRouterCompat) return
-      streamedToolCalls.set(index, toolCall)
-      writeSse(
-        res,
-        {},
-        `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "start"))}\n\n`,
-      )
-      writeSse(
-        res,
-        {},
-        `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "arguments"))}\n\n`,
-      )
-    })
-
-    runner.on("result", ({ text, model: detectedModel, toolCalls, usage, sessionId }) => {
+    runner.on("result", ({ text, model: detectedModel, usage, sessionId, reasoningText: resultReasoning }) => {
       if (sessionId) cursorSessionId = sessionId
-      if (text && !fullText.includes(text)) {
-        fullText = text
-      }
+      if (text && !fullText.includes(text)) fullText = text
       resolvedModel = detectedModel || model
       cliUsage = usage
-
-      if (toolCalls?.length && !hermesDelegation && !openRouterCompat) {
-        for (const [index, toolCall] of toolCalls.entries()) {
-          if (streamedToolCalls.has(index)) continue
-          writeSse(
-            res,
-            {},
-            `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "start"))}\n\n`,
-          )
-          writeSse(
-            res,
-            {},
-            `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "arguments"))}\n\n`,
-          )
-        }
-      }
+      if (resultReasoning) reasoningText = resultReasoning
     })
 
     runner.on("error", (error) => {
@@ -492,13 +391,8 @@ const handleStreamingResponse = async (
           finish()
           return
         }
-        const rawToolCalls =
-          parseToolCallsFromText(fullText) ??
-          (streamedToolCalls.size
-            ? [...streamedToolCalls.entries()]
-                .sort(([a], [b]) => a - b)
-                .map(([, call]) => call)
-            : undefined)
+
+        const rawToolCalls = parseToolCallsFromText(fullText)
         const finalized = hermesDelegation
           ? finalizeHermesDelegationOutput(hermesDelegation, fullText, rawToolCalls)
           : finalizeOpenRouterOutput(
@@ -507,48 +401,34 @@ const handleStreamingResponse = async (
               requestBody ?? { messages: [] },
               rawToolCalls,
             )
-        if (openRouterCompat && finalized.toolCalls?.length) {
-          for (const [index, toolCall] of finalized.toolCalls.entries()) {
-            if (streamedToolCalls.has(index)) continue
-            writeSse(
-              res,
-              {},
-              `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "start"))}\n\n`,
-            )
-            writeSse(
-              res,
-              {},
-              `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "arguments"))}\n\n`,
-            )
-          }
-        } else if (hermesDelegation && finalized.text !== fullText && finalized.text) {
-          emitTextDelta(finalized.text.slice(fullText.length))
-          fullText = finalized.text
-        } else if (!openRouterCompat && finalized.text && finalized.text !== fullText) {
-          emitTextDelta(finalized.text.slice(fullText.length))
-          fullText = finalized.text
-        }
-
-        const finishReason = finalized.toolCalls?.length ? "tool_calls" : "stop"
         const usage = buildUsage(cliUsage, prompt, finalized.text || fullText)
 
         if (ctx.config.sessionResume && cursorSessionId && sessionKey) {
           ctx.sessionStore.set(sessionKey, cursorSessionId)
         }
 
+        const response = createResponsesResponse(
+          responseId,
+          resolvedModel,
+          finalized.text || fullText,
+          usage,
+          reasoningText,
+          finalized.toolCalls,
+        )
+
         writeSse(
           res,
           {},
-          `data: ${JSON.stringify(createFinishChunk(requestId, resolvedModel, finishReason, usage))}\n\n`,
+          `event: response.completed\ndata: ${JSON.stringify({
+            type: "response.completed",
+            response,
+          })}\n\n`,
         )
         closeStream()
 
         logResponse(ctx.config.verboseLogging, requestId, 200, Date.now() - startedAt, {
           model: resolvedModel,
           usage,
-          tool_calls: finalized.toolCalls?.length ?? 0,
-          cursor_session: cursorSessionId,
-          resumed: Boolean(invocation.resumeSessionId),
         })
         finish()
       })

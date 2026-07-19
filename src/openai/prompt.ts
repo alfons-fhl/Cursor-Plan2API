@@ -1,4 +1,16 @@
 import type { OpenAiMessage } from "./types.js"
+import {
+  createImageAttachmentContext,
+  extractImageParts,
+  formatImageAttachmentsForPrompt,
+  resolveImagePart,
+} from "./vision.js"
+
+export type PromptBuildResult = {
+  prompt: string
+  imagePaths: string[]
+  cleanup?: () => Promise<void>
+}
 
 /**
  * Convert multimodal or plain message content to text.
@@ -16,7 +28,8 @@ export const messageContentToText = (content: OpenAiMessage["content"]): string 
             ? part.image_url
             : part.image_url?.url ?? ""
         if (!url) return "[Image]"
-        if (url.startsWith("data:")) return "[Image: inline]"
+        if (url.startsWith("data:")) return "[Image: attached]"
+        if (url.startsWith("file://")) return `[Image: ${url.slice("file://".length)}]`
         return `[Image: ${url}]`
       }
       return ""
@@ -67,46 +80,64 @@ export const toolsToSystemText = (
 /**
  * Build a single prompt string from OpenAI chat messages.
  */
-export const buildPromptFromMessages = (messages: OpenAiMessage[]): string => {
+export const buildPromptFromMessages = async (
+  messages: OpenAiMessage[],
+): Promise<PromptBuildResult> => {
   const systemParts: string[] = []
   const conversation: string[] = []
+  const imageContext = await createImageAttachmentContext()
 
-  for (const message of messages) {
-    const text = messageContentToText(message.content)
-    if (!text) continue
-
-    if (message.role === "system" || message.role === "developer") {
-      systemParts.push(text)
-      continue
-    }
-
-    if (message.role === "user") {
-      conversation.push(`User: ${text}`)
-      continue
-    }
-
-    if (message.role === "assistant") {
-      if (message.tool_calls?.length) {
-        conversation.push(
-          `Assistant tool calls: ${JSON.stringify(message.tool_calls)}`,
-        )
+  try {
+    for (const message of messages) {
+      const imageParts = extractImageParts(message.content)
+      for (const [index, part] of imageParts.entries()) {
+        await resolveImagePart(part, index, imageContext)
       }
-      if (text.trim()) conversation.push(`Assistant: ${text}`)
-      continue
+
+      const text = messageContentToText(message.content)
+      if (!text && imageParts.length === 0) continue
+
+      if (message.role === "system" || message.role === "developer") {
+        if (text) systemParts.push(text)
+        continue
+      }
+
+      if (message.role === "user") {
+        conversation.push(`User: ${text}`)
+        continue
+      }
+
+      if (message.role === "assistant") {
+        if (message.tool_calls?.length) {
+          conversation.push(
+            `Assistant tool calls: ${JSON.stringify(message.tool_calls)}`,
+          )
+        }
+        if (text.trim()) conversation.push(`Assistant: ${text}`)
+        continue
+      }
+
+      if (message.role === "tool" || message.role === "function") {
+        const id = message.tool_call_id ? ` (id: ${message.tool_call_id})` : ""
+        const label = message.name ? `Tool result (${message.name})${id}` : `Tool result${id}`
+        conversation.push(`${label}:\n${text}`)
+      }
     }
 
-    if (message.role === "tool" || message.role === "function") {
-      const id = message.tool_call_id ? ` (id: ${message.tool_call_id})` : ""
-      const label = message.name ? `Tool result (${message.name})${id}` : `Tool result${id}`
-      conversation.push(`${label}:\n${text}`)
+    const attachmentBlock = formatImageAttachmentsForPrompt(imageContext.images)
+    const system = systemParts.length
+      ? `System:\n${systemParts.join("\n\n")}\n\n`
+      : ""
+
+    return {
+      prompt: `${system}${attachmentBlock}${conversation.join("\n\n")}`.trim(),
+      imagePaths: imageContext.images.map((image) => image.path),
+      cleanup: imageContext.images.length > 0 ? imageContext.cleanup : undefined,
     }
+  } catch (error) {
+    await imageContext.cleanup()
+    throw error
   }
-
-  const system = systemParts.length
-    ? `System:\n${systemParts.join("\n\n")}\n\n`
-    : ""
-
-  return `${system}${conversation.join("\n\n")}`.trim()
 }
 
 /**

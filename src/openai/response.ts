@@ -33,6 +33,29 @@ export const createTextChunk = (
 })
 
 /**
+ * Create an OpenAI streaming chunk for assistant reasoning text.
+ */
+export const createReasoningChunk = (
+  requestId: string,
+  model: string,
+  text: string,
+): OpenAiChatChunk => ({
+  id: `chatcmpl-${requestId}`,
+  object: "chat.completion.chunk",
+  created: Math.floor(Date.now() / 1000),
+  model,
+  choices: [
+    {
+      index: 0,
+      delta: {
+        reasoning_content: text,
+      },
+      finish_reason: null,
+    },
+  ],
+})
+
+/**
  * Create an OpenAI streaming chunk for a tool call delta.
  */
 export const createToolCallChunk = (
@@ -102,6 +125,7 @@ export const createChatResponse = (
   content: string,
   toolCalls?: OpenAiToolCall[],
   usage?: OpenAiUsage,
+  reasoningContent?: string,
 ): OpenAiChatResponse => ({
   id: `chatcmpl-${requestId}`,
   object: "chat.completion",
@@ -113,6 +137,7 @@ export const createChatResponse = (
       message: {
         role: "assistant",
         content: toolCalls?.length ? null : content,
+        reasoning_content: reasoningContent ?? undefined,
         tool_calls: toolCalls,
       },
       finish_reason: toolCalls?.length ? "tool_calls" : "stop",

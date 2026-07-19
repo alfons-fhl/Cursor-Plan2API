@@ -12,6 +12,7 @@ import {
   isAssistantMessage,
   isResultMessage,
   isSystemInit,
+  isThinkingMessage,
   isToolCallMessage,
   type AgentRunOutput,
   type CursorCliUsage,
@@ -20,6 +21,7 @@ import {
 
 export type AgentStreamEvents = {
   delta: [{ text: string }]
+  reasoning: [{ text: string }]
   toolCall: [{ toolCall: ParsedToolCall; index: number }]
   result: [{
     text: string
@@ -27,6 +29,7 @@ export type AgentStreamEvents = {
     toolCalls?: ParsedToolCall[]
     usage?: CursorCliUsage
     sessionId?: string
+    reasoningText?: string
   }]
   error: [Error]
   close: [number | null]
@@ -37,11 +40,13 @@ export type AgentStreamEvents = {
  */
 export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
   private turnBuffer = ""
+  private reasoningBuffer = ""
   private detectedModel = "auto"
   private sawResult = false
   private toolCallIndex = 0
   private suppressNativeToolCalls = false
   private sessionId?: string
+  private emitReasoning = false
 
   constructor(private readonly config: ProxyConfig) {
     super()
@@ -52,11 +57,13 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
    */
   async runStream(invocation: AgentInvocation): Promise<void> {
     this.turnBuffer = ""
+    this.reasoningBuffer = ""
     this.detectedModel = invocation.model
     this.sawResult = false
     this.toolCallIndex = 0
     this.suppressNativeToolCalls = invocation.suppressNativeToolCalls === true
     this.sessionId = invocation.resumeSessionId
+    this.emitReasoning = invocation.emitReasoning === true
 
     const args = buildAgentArgs(this.config, { ...invocation, stream: true })
     const stdin = resolvePromptStdin(this.config, invocation.prompt)
@@ -98,6 +105,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
         model: this.detectedModel,
         toolCalls,
         sessionId: this.sessionId,
+        reasoningText: this.reasoningBuffer || undefined,
       })
     }
   }
@@ -137,11 +145,13 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
    */
   async runSyncJson(invocation: AgentInvocation): Promise<AgentRunOutput> {
     this.turnBuffer = ""
+    this.reasoningBuffer = ""
     this.detectedModel = invocation.model
     this.sawResult = false
     this.toolCallIndex = 0
     this.suppressNativeToolCalls = invocation.suppressNativeToolCalls === true
     this.sessionId = invocation.resumeSessionId
+    this.emitReasoning = invocation.emitReasoning === true
 
     const args = buildAgentArgs(this.config, { ...invocation, stream: true })
     const stdin = resolvePromptStdin(this.config, invocation.prompt)
@@ -200,6 +210,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
           : collectedToolCalls),
       usage,
       sessionId: this.sessionId,
+      reasoningText: this.reasoningBuffer || undefined,
     }
   }
 
@@ -245,6 +256,16 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
 
     if (isSystemInit(message) && message.model) {
       this.detectedModel = message.model
+      return
+    }
+
+    if (isThinkingMessage(message)) {
+      if (!this.emitReasoning || message.subtype !== "delta" || !message.text) {
+        return
+      }
+
+      this.reasoningBuffer += message.text
+      this.emit("reasoning", { text: message.text })
       return
     }
 
@@ -298,6 +319,7 @@ export class CursorAgentRunner extends EventEmitter<AgentStreamEvents> {
         toolCalls,
         usage: message.usage,
         sessionId: this.sessionId,
+        reasoningText: this.reasoningBuffer || undefined,
       })
     }
   }

@@ -1,0 +1,18 @@
+services:
+  cursor-plan2api:
+    build: .
+    container_name: cursor-plan2api
+    ports:
+      - "8787:8787"
+    environment:
+      CURSOR_PLAN2API_HOST: 0.0.0.0
+      CURSOR_PLAN2API_PORT: 8787
+      CURSOR_PLAN2API_DEFAULT_MODEL: composer-2.5
+      CURSOR_PLAN2API_AGENT_POOL: "1"
+      CURSOR_PLAN2API_AGENT_POOL_SIZE: "2"
+      CURSOR_PLAN2API_WARMUP_ON_START: "1"
+      # CURSOR_PLAN2API_API_KEY: your-local-key
+    volumes:
+      # Mount Cursor CLI auth from the host (run `agent login` on host first)
+      - ${HOME}/.cursor:/root/.cursor:ro
+    restart: unless-stopped

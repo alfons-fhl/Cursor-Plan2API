@@ -20,6 +20,13 @@ export type CursorCliAssistantMessage = {
   timestamp_ms?: number
 }
 
+export type CursorCliThinkingMessage = {
+  type: "thinking"
+  subtype: "delta" | "completed"
+  text?: string
+  timestamp_ms?: number
+}
+
 export type CursorCliToolCallMessage = {
   type: "tool_call"
   subtype: "started" | "completed"
@@ -37,6 +44,7 @@ export type CursorCliResult = {
 export type CursorCliMessage =
   | CursorCliSystemInit
   | CursorCliAssistantMessage
+  | CursorCliThinkingMessage
   | CursorCliToolCallMessage
   | CursorCliResult
 
@@ -60,6 +68,7 @@ export type AgentRunOutput = {
   toolCalls?: ParsedToolCall[]
   usage?: CursorCliUsage
   sessionId?: string
+  reasoningText?: string
 }
 
 export const isSystemInit = (
@@ -70,6 +79,10 @@ export const isSystemInit = (
 export const isAssistantMessage = (
   message: CursorCliMessage,
 ): message is CursorCliAssistantMessage => message.type === "assistant"
+
+export const isThinkingMessage = (
+  message: CursorCliMessage,
+): message is CursorCliThinkingMessage => message.type === "thinking"
 
 export const isToolCallMessage = (
   message: CursorCliMessage,

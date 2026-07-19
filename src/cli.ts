@@ -46,6 +46,9 @@ Environment:
   CURSOR_PLAN2API_API_KEY=            Optional local bearer token
   CURSOR_PLAN2API_EXTRA_MODELS=        Comma-separated extra model ids for /v1/models
   CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=true  Include built-in Cursor model catalog
+  CURSOR_PLAN2API_WARMUP_ON_START=true
+  CURSOR_PLAN2API_AGENT_POOL=0
+  CURSOR_PLAN2API_AGENT_POOL_SIZE=2
   CURSOR_PLAN2API_TIMEOUT_MS=300000
   CURSOR_PLAN2API_AGENT_BIN=agent
 
@@ -54,6 +57,7 @@ Endpoints:
   GET  /v1/models
   GET  /v1/usage
   POST /v1/chat/completions
+  POST /v1/responses
   POST /v1/embeddings
   POST /v1/images/generations
 

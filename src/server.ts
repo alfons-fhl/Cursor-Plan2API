@@ -7,6 +7,7 @@ import {
 
 import type { ProxyConfig } from "./config.js"
 import { RequestSemaphore } from "./concurrency.js"
+import { AgentWarmPool } from "./cursor/agent-pool.js"
 import { CursorSessionStore } from "./cursor/session-store.js"
 import { warmupCursorCli } from "./cursor/warmup.js"
 import {
@@ -17,6 +18,7 @@ import {
 import { handleEmbeddings } from "./handlers/embeddings.js"
 import { sendJson } from "./handlers/http.js"
 import { handleImageGenerations } from "./handlers/images.js"
+import { handleResponses } from "./handlers/responses.js"
 import { sendError } from "./handlers/shared.js"
 import { handleUsage } from "./handlers/usage.js"
 import { logRequest } from "./request-log.js"
@@ -26,6 +28,7 @@ type ServerContext = {
   cliVersion?: string
   semaphore: RequestSemaphore
   sessionStore: CursorSessionStore
+  agentPool: AgentWarmPool
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -91,6 +94,11 @@ export const createProxyServer = (ctx: ServerContext): Server => {
         return
       }
 
+      if (method === "POST" && pathname === "/v1/responses") {
+        await handleResponses(req, res, ctx)
+        return
+      }
+
       if (method === "POST" && pathname === "/v1/embeddings") {
         await handleEmbeddings(req, res, ctx)
         return
@@ -125,9 +133,14 @@ export const startServer = async (
   cliVersion?: string,
 ): Promise<Server> => {
   const sessionStore = new CursorSessionStore(config.sessionTtlMs)
+  const agentPool = new AgentWarmPool(config)
 
   if (config.warmupOnStart) {
     await warmupCursorCli(config)
+  }
+
+  if (config.agentPool) {
+    await agentPool.start()
   }
 
   const server = createProxyServer({
@@ -135,6 +148,7 @@ export const startServer = async (
     cliVersion,
     semaphore: new RequestSemaphore(config.maxConcurrentRequests),
     sessionStore,
+    agentPool,
   })
 
   await new Promise<void>((resolve, reject) => {

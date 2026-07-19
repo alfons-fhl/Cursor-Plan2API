@@ -47,6 +47,10 @@ const configSchema = z.object({
   sessionTtlMs: z.coerce.number().int().positive().default(3_600_000),
   /** Warm the agent binary on gateway startup. */
   warmupOnStart: z.boolean().default(true),
+  /** Keep warm agent CLI slots between requests to reduce cold-start latency. */
+  agentPool: z.boolean().default(false),
+  /** Number of concurrent warm CLI slots when agent pool is enabled. */
+  agentPoolSize: z.coerce.number().int().positive().default(2),
   /** Merge built-in Cursor model catalog into `/v1/models` when CLI returns a subset. */
   includeModelCatalog: z.boolean().default(true),
   /** Additional models from `CURSOR_PLAN2API_EXTRA_MODELS`. */
@@ -87,6 +91,8 @@ export const loadConfig = (): ProxyConfig =>
     sessionResumeMinChars: env("SESSION_RESUME_MIN_CHARS"),
     sessionTtlMs: env("SESSION_TTL_MS"),
     warmupOnStart: boolFromEnv(env("WARMUP_ON_START"), true),
+    agentPool: boolFromEnv(env("AGENT_POOL"), false),
+    agentPoolSize: env("AGENT_POOL_SIZE"),
     includeModelCatalog: boolFromEnv(env("INCLUDE_MODEL_CATALOG"), true),
     extraModels: parseExtraModels(env("EXTRA_MODELS")),
   })
