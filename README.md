@@ -49,7 +49,7 @@ cursor-plan2api/composer-2.5-fast
 cursor-plan2api/auto
 ```
 
-`GET /v1/models` returns all Cursor CLI models; the three above are listed first as **recommended**.
+`GET /v1/models` returns the three recommended models first, then the full merged catalog. See [Model catalog & `/v1/models`](#-model-catalog--v1models) for details.
 
 ---
 
@@ -71,6 +71,7 @@ cursor-plan2api/auto
 | ⚡ **Plan Fast-Path** | Plan mode ~2× faster (ask + planning prompt) |
 | 🔁 **Session Resume** | Reuse Cursor CLI sessions on large multi-turn prompts |
 | 🔒 **Optional Auth** | Local bearer token for the proxy |
+| 📋 **Model Catalog** | ~189 Cursor model IDs for OpenCode `/models` and other clients |
 | 🔄 **429 Retry** | Automatic retry on rate limits |
 | 🌐 **CORS** | Browser clients supported |
 | 🖥️ **Daemon** | `start` / `stop` / `status` in the background |
@@ -167,11 +168,13 @@ CURSOR_PLAN2API_CLIENT_COMPAT=delegate cursor-plan2api
 **Global:** `~/.config/opencode/opencode.jsonc`  
 **Project:** [`opencode.jsonc`](opencode.jsonc) in this repo
 
-Preconfigured provider `cursor-plan2api` with three models:
+Preconfigured provider `cursor-plan2api` with three **recommended** models:
 
 - `cursor-plan2api/composer-2.5`
 - `cursor-plan2api/composer-2.5-fast`
 - `cursor-plan2api/auto`
+
+OpenCode and other clients that call `GET /v1/models` also see the **full model catalog** (~189 ids) — Claude, Codex, Grok, Fable, and more. Use `/models` in OpenCode to pick any listed id (for example `cursor-plan2api/claude-sonnet-5-thinking-high`).
 
 Headers sent automatically:
 
@@ -195,6 +198,68 @@ opencode run -m cursor-plan2api/auto "Auto route"
 ```
 
 > **Note:** ~15–20s per turn is normal — each request spawns a new `agent` CLI process.
+
+---
+
+## 📋 Model catalog & `/v1/models`
+
+### Why the catalog exists
+
+The Cursor CLI often exposes only a small subset of models (typically the three Composer ids). Clients such as **OpenCode** populate their model picker from `GET /v1/models`. Without a catalog, you would see only `composer-2.5`, `composer-2.5-fast`, and `auto` even though your Cursor subscription supports many more models.
+
+Cursor-Plan2API ships a built-in catalog (`src/cursor/catalog.ts`, synced from `agent --list-models`) and merges it with live CLI output so clients get the full list.
+
+### Merge behavior
+
+`GET /v1/models` builds one list from three sources. **Later sources win on id conflicts** (display names from the higher-priority source are kept):
+
+| Priority | Source | Description |
+|----------|--------|-------------|
+| 1 (highest) | **Live CLI** | Models returned by `agent --list-models` at request time |
+| 2 | **Extras** | `CURSOR_PLAN2API_EXTRA_MODELS` — ids not yet in CLI or catalog |
+| 3 (lowest) | **Built-in catalog** | ~189 known Cursor model ids (fallback) |
+
+Recommended models (`composer-2.5`, `composer-2.5-fast`, `auto`) are always sorted to the top. The response also includes embedding model ids and a `recommended` array.
+
+```bash
+curl http://127.0.0.1:8787/v1/models | jq '.data | length'   # full count
+curl http://127.0.0.1:8787/v1/models | jq '.recommended'     # top picks
+```
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG` | `true` | Include the built-in catalog in `/v1/models` |
+| `CURSOR_PLAN2API_EXTRA_MODELS` | — | Comma-separated extra models: `id` or `id=Display Name` |
+
+**Disable the catalog** (CLI models only — smaller list):
+
+```bash
+CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=false cursor-plan2api
+```
+
+**Add models** before they appear in CLI or catalog (useful for new Cursor releases):
+
+```bash
+CURSOR_PLAN2API_EXTRA_MODELS="cursor-grok-4.5-high=Grok 4.5,claude-opus-4-8-thinking-high" cursor-plan2api
+```
+
+### Fable models and data policy
+
+Models whose id contains `fable` (for example `claude-fable-5-thinking-max`) require **Cursor data retention policy acceptance** in the Cursor app. If you have not accepted the policy, chat requests return a data-policy error. Either accept the policy in Cursor settings or skip Fable models in tests with `--skip-fable`.
+
+### Verification status
+
+The model matrix test suite (`npm run test:models`) was run against the full catalog in **ask + non-stream** mode:
+
+| Result | Count |
+|--------|-------|
+| **Total combinations** | 179 / 179 passed |
+| Real chat responses | 42 |
+| Skipped as OK (`usage_limit`) | 137 |
+
+`usage_limit` / spend-cap responses are treated as success — the model id is valid and reachable; only the subscription quota blocked a full reply.
 
 ---
 
@@ -235,11 +300,9 @@ Returns status, CLI version, `recommended_models`, session settings.
 
 ### `GET /v1/models`
 
-Live Cursor CLI models plus built-in catalog fallback (~189 ids). **Recommended models appear first:**
+Returns OpenAI-compatible model objects. Merges **live CLI** + **extras** + **built-in catalog** (priority: CLI → extras → catalog). Recommended models are listed first; response includes `recommended` and `data` arrays.
 
-`composer-2.5` · `composer-2.5-fast` · `auto`
-
-Disable catalog: `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=false`. Extra models: `CURSOR_PLAN2API_EXTRA_MODELS=id` or `id=Display Name` (comma-separated).
+See [Model catalog & `/v1/models`](#-model-catalog--v1models) for merge rules, env vars, and Fable data-policy notes.
 
 ### `POST /v1/chat/completions`
 
@@ -314,12 +377,48 @@ tail -f ~/.cursor-plan2api/server.log
 ## 🧪 Tests
 
 ```bash
-npm run test
-npm run test:edge
-npm run test:all
-npm run test:models -- --modes=ask --no-stream   # model matrix (server + agent login)
-npm run test:models -- --list-only
+npm run test              # full integration suite
+npm run test:edge         # edge cases
+npm run test:all          # full + edge
 ```
+
+### Model matrix (`npm run test:models`)
+
+Exercises every chat model from `GET /v1/models` across modes and stream settings. Requires a running gateway and `agent login`.
+
+**Prerequisites:** `cursor-plan2api` running, `npm run build` done.
+
+```bash
+# List models without running requests
+npm run test:models -- --list-only
+
+# Fast smoke: ask mode, non-streaming only (how the 179/179 run was done)
+npm run test:models -- --modes=ask --no-stream
+
+# Throttle + resume after interruption (state saved to model-matrix-state.json)
+npm run test:models -- --modes=ask --no-stream --delay=45000 --resume
+
+# Skip Fable models (data policy not accepted)
+npm run test:models -- --skip-fable --delay=45000
+
+# Subset of models
+npm run test:models -- --models=composer-2.5,auto --modes=ask
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--modes` | `ask,plan,agent` | Comma-separated CLI modes to test |
+| `--no-stream` | — | Skip streaming cases |
+| `--no-non-stream` | — | Skip non-streaming cases |
+| `--delay` | `0` | Milliseconds to wait between cases (rate-limit friendly) |
+| `--resume` | — | Skip combinations already marked OK in state file |
+| `--state-file` | `model-matrix-state.json` | Resume checkpoint path |
+| `--skip-fable` | — | Omit models whose id contains `fable` |
+| `--list-only` | — | Print model ids and exit |
+| `--base-url` | `http://127.0.0.1:8787` | Gateway URL |
+| `--timeout` | `180000` | Per-request timeout (ms) |
+
+**Exit codes:** `0` when all cases pass. Subscription `usage_limit` responses count as pass. True failures (unknown model, auth error, empty response) exit `1`.
 
 ---
 
@@ -327,11 +426,14 @@ npm run test:models -- --list-only
 
 ```text
 Cursor-Plan2API/
-├── opencode.jsonc             # OpenCode provider (3 models)
+├── opencode.jsonc                  # OpenCode provider (3 recommended models)
 ├── examples/hermes-config.yaml
+├── scripts/model-matrix-test.mjs   # Full model catalog test suite
 ├── src/
-│   ├── models.ts              # Recommended model IDs
-│   ├── openai/hermes-mode.ts  # Hermes Agent / OpenCode client logic
+│   ├── models.ts                   # Recommended model IDs + sorting
+│   ├── cursor/catalog.ts           # Built-in ~189 model ids
+│   ├── cursor/models.ts            # Catalog merge + EXTRA_MODELS parser
+│   ├── openai/hermes-mode.ts       # Hermes Agent / OpenCode client logic
 │   └── cursor/session-store.ts
 └── dist/
 ```
@@ -347,6 +449,9 @@ Cursor-Plan2API/
 | Model says "I'm Composer in Cursor" | Restart OpenCode (needs `X-Plan2API-Client: opencode`) |
 | Slow responses (~20s/turn) | Normal — CLI spawn overhead per request |
 | `agent login` required | `curl https://cursor.com/install -fsS \| bash && agent login` |
+| Fable model: data policy error | Accept Cursor data retention policy, or use `--skip-fable` in tests |
+| OpenCode shows only 3 models | Restart gateway; ensure `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=true` (default) |
+| `usage_limit` in matrix test | Expected for quota-capped models — counted as pass, not failure |
 
 ---
 
