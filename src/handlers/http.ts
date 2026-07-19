@@ -39,6 +39,8 @@ export const writeSse = (
   headers: Record<string, string>,
   chunk?: string,
 ): void => {
+  if (res.writableEnded || res.destroyed) return
+
   if (!res.headersSent) {
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
@@ -49,7 +51,15 @@ export const writeSse = (
     res.write(":ok\n\n")
   }
 
-  if (chunk) {
+  if (chunk && !res.writableEnded) {
     res.write(chunk)
   }
+}
+
+/**
+ * End an SSE response safely (no-op if already closed).
+ */
+export const endSse = (res: ServerResponse): void => {
+  if (res.writableEnded || res.destroyed) return
+  res.end()
 }

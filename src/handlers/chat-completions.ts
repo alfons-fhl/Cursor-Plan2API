@@ -4,6 +4,7 @@ import type { ProxyConfig } from "../config.js"
 import type { RequestSemaphore } from "../concurrency.js"
 import { CursorSessionStore, buildResumePrompt, canResumeSession } from "../cursor/session-store.js"
 import { listCursorModels } from "../cursor/cli.js"
+import { resolvePublicModels } from "../cursor/models.js"
 import { RECOMMENDED_MODELS, sortModelsWithRecommendedFirst } from "../models.js"
 import { CursorAgentRunner } from "../cursor/runner.js"
 import { resolveRequestMode, resolveAgentWorkspace, resolveWorkspace } from "../cursor/workspace.js"
@@ -29,7 +30,7 @@ import {
 import { buildUsage } from "../openai/tokens.js"
 import type { OpenAiChatRequest, OpenAiToolCall } from "../openai/types.js"
 import { logRequest, logResponse } from "../request-log.js"
-import { readJsonBody, writeSse } from "./http.js"
+import { readJsonBody, writeSse, endSse } from "./http.js"
 import { authorize, authorizeHealth, sendError } from "./shared.js"
 import { sendJson } from "./http.js"
 
@@ -59,6 +60,8 @@ export const handleHealth = (
     auth: "cursor-cli-subscription",
     cli_version: ctx.cliVersion ?? "unknown",
     default_model: ctx.config.defaultModel,
+    extra_models: ctx.config.extraModels.length,
+    model_catalog: ctx.config.includeModelCatalog,
     mode: ctx.config.agentMode,
     plan_fast_path: ctx.config.planFastPath,
     hermes_agent_mode: ctx.config.clientCompat === "delegate",
@@ -93,7 +96,13 @@ export const handleModels = async (
   }
 
   try {
-    const models = sortModelsWithRecommendedFirst(await listCursorModels(ctx.config))
+    const cliModels = await listCursorModels(ctx.config)
+    const models = sortModelsWithRecommendedFirst(
+      resolvePublicModels(cliModels, {
+        includeCatalog: ctx.config.includeModelCatalog,
+        extraModels: ctx.config.extraModels,
+      }),
+    )
     sendJson(res, 200, {
       object: "list",
       recommended: RECOMMENDED_MODELS,
@@ -352,13 +361,26 @@ const handleStreamingResponse = async (
   })
 
   let isFirst = true
+  let closed = false
   let fullText = ""
   let resolvedModel = model
   let cliUsage: Parameters<typeof buildUsage>[0]
   let cursorSessionId: string | undefined
   const streamedToolCalls = new Map<number, OpenAiToolCall>()
 
+  const closeStream = (): void => {
+    if (closed) return
+    closed = true
+    writeSse(res, {}, "data: [DONE]\n\n")
+    endSse(res)
+  }
+
   await new Promise<void>((resolve) => {
+    const finish = (): void => {
+      if (closed) return
+      resolve()
+    }
+
     const emitTextDelta = (text: string) => {
       if (!text) return
       fullText += text
@@ -421,14 +443,17 @@ const handleStreamingResponse = async (
         {},
         `data: ${JSON.stringify({ error: { message: error.message, type: "server_error", code: null } })}\n\n`,
       )
-      writeSse(res, {}, "data: [DONE]\n\n")
-      res.end()
-      resolve()
+      closeStream()
+      finish()
     })
 
     runner
       .runStream(invocation)
       .then(() => {
+        if (closed) {
+          finish()
+          return
+        }
         const rawToolCalls =
           parseToolCallsFromText(fullText) ??
           (streamedToolCalls.size
@@ -478,8 +503,7 @@ const handleStreamingResponse = async (
           {},
           `data: ${JSON.stringify(createFinishChunk(requestId, resolvedModel, finishReason, usage))}\n\n`,
         )
-        writeSse(res, {}, "data: [DONE]\n\n")
-        res.end()
+        closeStream()
 
         logResponse(ctx.config.verboseLogging, requestId, 200, Date.now() - startedAt, {
           model: resolvedModel,
@@ -488,17 +512,20 @@ const handleStreamingResponse = async (
           cursor_session: cursorSessionId,
           resumed: Boolean(invocation.resumeSessionId),
         })
-        resolve()
+        finish()
       })
       .catch((error) => {
+        if (closed) {
+          finish()
+          return
+        }
         writeSse(
           res,
           {},
           `data: ${JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error), type: "server_error", code: null } })}\n\n`,
         )
-        writeSse(res, {}, "data: [DONE]\n\n")
-        res.end()
-        resolve()
+        closeStream()
+        finish()
       })
   })
 }

@@ -235,9 +235,11 @@ Returns status, CLI version, `recommended_models`, session settings.
 
 ### `GET /v1/models`
 
-Live Cursor CLI models. **Recommended models appear first:**
+Live Cursor CLI models plus built-in catalog fallback (~189 ids). **Recommended models appear first:**
 
 `composer-2.5` · `composer-2.5-fast` · `auto`
+
+Disable catalog: `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=false`. Extra models: `CURSOR_PLAN2API_EXTRA_MODELS=id` or `id=Display Name` (comma-separated).
 
 ### `POST /v1/chat/completions`
 
@@ -289,6 +291,8 @@ Live Cursor CLI models. **Recommended models appear first:**
 | `CURSOR_PLAN2API_CLIENT_COMPAT` | `openrouter` | `openrouter` or `delegate` |
 | `CURSOR_PLAN2API_SESSION_RESUME` | `true` | Cursor CLI `--resume` |
 | `CURSOR_PLAN2API_WARMUP_ON_START` | `true` | Warm agent binary on start |
+| `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG` | `true` | Merge built-in model catalog into `/v1/models` |
+| `CURSOR_PLAN2API_EXTRA_MODELS` | — | Additional models (`id` or `id=Name`, comma-separated) |
 | `CURSOR_PLAN2API_API_KEY` | — | Optional bearer token |
 | `CURSOR_PLAN2API_VERBOSE` | `false` | Request logging |
 
@@ -313,6 +317,8 @@ tail -f ~/.cursor-plan2api/server.log
 npm run test
 npm run test:edge
 npm run test:all
+npm run test:models -- --modes=ask --no-stream   # model matrix (server + agent login)
+npm run test:models -- --list-only
 ```
 
 ---

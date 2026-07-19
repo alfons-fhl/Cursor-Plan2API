@@ -1,5 +1,7 @@
 import { z } from "zod"
 
+import { parseExtraModels } from "./cursor/models.js"
+
 const boolFromEnv = (value: string | undefined, defaultValue: boolean): boolean => {
   if (value === undefined || value.trim() === "") return defaultValue
   return !["0", "false", "no", "off"].includes(value.trim().toLowerCase())
@@ -45,6 +47,10 @@ const configSchema = z.object({
   sessionTtlMs: z.coerce.number().int().positive().default(3_600_000),
   /** Warm the agent binary on gateway startup. */
   warmupOnStart: z.boolean().default(true),
+  /** Merge built-in Cursor model catalog into `/v1/models` when CLI returns a subset. */
+  includeModelCatalog: z.boolean().default(true),
+  /** Additional models from `CURSOR_PLAN2API_EXTRA_MODELS`. */
+  extraModels: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
 })
 
 export type ProxyConfig = z.infer<typeof configSchema>
@@ -81,4 +87,6 @@ export const loadConfig = (): ProxyConfig =>
     sessionResumeMinChars: env("SESSION_RESUME_MIN_CHARS"),
     sessionTtlMs: env("SESSION_TTL_MS"),
     warmupOnStart: boolFromEnv(env("WARMUP_ON_START"), true),
+    includeModelCatalog: boolFromEnv(env("INCLUDE_MODEL_CATALOG"), true),
+    extraModels: parseExtraModels(env("EXTRA_MODELS")),
   })

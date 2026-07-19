@@ -12,6 +12,7 @@
     "dev": "tsx src/cli.ts",
     "test": "node scripts/full-test.mjs",
     "test:edge": "node scripts/edge-test.mjs",
+    "test:models": "node scripts/model-matrix-test.mjs",
     "test:all": "node scripts/full-test.mjs && node scripts/edge-test.mjs"
   },
   "engines": {
