@@ -14,6 +14,8 @@ const BASE = process.argv.find((a) => a.startsWith("--base-url="))?.split("=")[1
   ?? process.env.HC_TEST_BASE_URL
   ?? "http://127.0.0.1:8787"
 
+const UNIT_ONLY = process.argv.includes("--unit-only")
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = join(__dirname, "..")
 
@@ -156,7 +158,7 @@ async function runUnitTests() {
     },
   ])
   record("buildPrompt vision writes temp file", visionPrompt.imagePaths.length === 1, null)
-  record("buildPrompt vision includes attachment block", visionPrompt.prompt.includes("attached image file"), null)
+  record("buildPrompt vision includes attachment block", visionPrompt.prompt.includes("Vision task"), null)
   await visionPrompt.cleanup?.()
 
   const toolPrompt = toolsToSystemText([{
@@ -266,6 +268,50 @@ async function runUnitTests() {
   const parsedDataUrl = parseDataUrl(tinyPng)
   record("parseDataUrl png", parsedDataUrl?.mime === "image/png" && parsedDataUrl.data.length > 0, null)
   record("MAX_IMAGE_BYTES is 1MB", MAX_IMAGE_BYTES === 1_048_576, null)
+
+  section("UNIT: anthropic/stream.ts")
+  const {
+    createAnthropicStreamState,
+    createMessageStartEvent,
+    createTextDeltaEvent,
+    createThinkingDeltaEvent,
+    createMessageEndEvents,
+    openContentBlock,
+    closeOpenContentBlock,
+  } = await import(join(ROOT, "dist/anthropic/stream.js"))
+
+  const streamState = createAnthropicStreamState("msg_test", "composer-2.5")
+  record("createMessageStartEvent", createMessageStartEvent("msg_test", "composer-2.5", 10).includes("message_start"), null)
+  const opened = openContentBlock(streamState, "text")
+  record("openContentBlock text", opened.event.includes("content_block_start"), null)
+  record("createTextDeltaEvent", createTextDeltaEvent(opened.blockIndex, "hi").includes("text_delta"), null)
+  const thinking = openContentBlock(streamState, "thinking")
+  record("createThinkingDeltaEvent", createThinkingDeltaEvent(thinking.blockIndex, "hmm").includes("thinking_delta"), null)
+  const stop = closeOpenContentBlock(streamState)
+  record("closeOpenContentBlock", stop?.includes("content_block_stop") ?? false, null)
+  const endEvents = createMessageEndEvents(undefined, { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 })
+  record("createMessageEndEvents", endEvents.length === 2 && endEvents[1].includes("message_stop"), null)
+
+  section("UNIT: openai/compact-tools.ts")
+  const { compactToolDefinition, compactJsonSchema, maybeCompactTools } = await import(join(ROOT, "dist/openai/compact-tools.js"))
+  const longDesc = "x".repeat(200)
+  const compacted = compactToolDefinition({ name: "fn", description: longDesc, parameters: { type: "object", properties: { a: { type: "string", description: "nested" } } } })
+  record("compactToolDefinition truncates description", String(compacted.description).length <= 121, null)
+  record("compactJsonSchema strips nested descriptions", !JSON.stringify(compactJsonSchema(compacted.parameters)).includes("nested"), null)
+  const compactedTools = maybeCompactTools([{ type: "function", function: { name: "t", description: longDesc } }], undefined, true)
+  record("maybeCompactTools enabled", compactedTools.tools?.[0]?.function?.description !== longDesc, null)
+
+  section("UNIT: cursor/profile-rotator.ts")
+  const { ProfileRotator, parseProfilesEnv } = await import(join(ROOT, "dist/cursor/profile-rotator.js"))
+  const rotator = new ProfileRotator([
+    { name: "a", agentBin: "/bin/agent-a" },
+    { name: "b", agentBin: "/bin/agent-b" },
+  ], "round-robin", "agent")
+  const first = rotator.select()
+  const second = rotator.select()
+  record("profile round-robin alternates", first?.profile.name === "a" && second?.profile.name === "b", null)
+  const parsedProfiles = parseProfilesEnv('work:/usr/bin/agent:/home/work|home')
+  record("parseProfilesEnv pipe format", parsedProfiles.length === 2 && parsedProfiles[0]?.name === "work", null)
 
   section("UNIT: cursor/cli.ts")
   const { parseModelList, isRateLimited } = await import(join(ROOT, "dist/cursor/cli.js"))
@@ -875,23 +921,27 @@ async function runCrossChecks() {
 async function main() {
   log(`\n🔬 cursor-plan2api FULL TEST SUITE`)
   log(`   Target: ${BASE}`)
+  log(`   Mode:   ${UNIT_ONLY ? "unit-only" : "full"}`)
   log(`   Time:   ${new Date().toISOString()}`)
 
-  // Preflight
-  try {
-    const { res } = await fetchJson("/health")
-    if (res.status !== 200) throw new Error(`health returned ${res.status}`)
-  } catch (e) {
-    log(`\n❌ Server not reachable at ${BASE}: ${e.message}`)
-    log("   Start with: node dist/cli.js")
-    process.exit(1)
+  if (!UNIT_ONLY) {
+    try {
+      const { res } = await fetchJson("/health")
+      if (res.status !== 200) throw new Error(`health returned ${res.status}`)
+    } catch (e) {
+      log(`\n❌ Server not reachable at ${BASE}: ${e.message}`)
+      log("   Start with: node dist/cli.js")
+      process.exit(1)
+    }
   }
 
   await runUnitTests()
-  await runHttpTests()
-  await runConcurrencyTests()
-  await runCrossChecks()
-  await runCliTests()
+  if (!UNIT_ONLY) {
+    await runHttpTests()
+    await runConcurrencyTests()
+    await runCrossChecks()
+    await runCliTests()
+  }
 
   section("BENCHMARK SUMMARY")
   benchmarks.sort((a, b) => b.ms - a.ms)

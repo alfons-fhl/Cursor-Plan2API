@@ -73,11 +73,11 @@
 | Gap | Current behavior |
 |-----|------------------|
 | ~10–20s per turn (without pool) | New `agent` process per request; pool reduces cold start |
-| Single account | One CLI login, no rotation |
+| Single account | One CLI login by default; optional multi-profile rotation |
 | Cost estimates approximate | Based on published pricing; Composer subscription shows $0 |
 | Fable models require data policy | Cursor app must accept data retention policy |
-| No npm publish yet | Install from source or Docker |
-| No GitHub Actions CI | Manual `npm test` only |
+| npm package prepared | `package.json` publish-ready; run `npm publish` with token |
+| GitHub Actions CI | `.github/workflows/ci.yml` — build + unit tests |
 
 ---
 
@@ -98,7 +98,7 @@ Legend: ✅ full · ⚠️ partial · ❌ none · ➖ N/A (different purpose) ·
 | **Vision / images in chat** | ✅ | ✅ OCR/API | ❌ | ✅ | ⚠️ | ➖ | ❌ | ✅ ≤1MB |
 | **Thinking / reasoning** | ✅ | ✅ | ✅ *-thinking | ⚠️ | ❌ | ✅ | ❌ | ⚠️ |
 | **Session resume** | ✅ CLI | ⚠️ compress | ❌ | ❌ | ❌ | ➖ | ❌ | ✅ SDK DB |
-| **Multi-account rotation** | ❌ | ❌ | ❌ | ✅ | ✅ comma keys | ➖ | ❌ | ✅ hosted |
+| **Multi-account rotation** | ✅ profiles | ❌ | ❌ | ✅ | ✅ comma keys | ➖ | ❌ | ✅ hosted |
 | **Context compression** | ✅ | ✅ 3 levels | ❌ | ❌ | ❌ | ➖ | ❌ | ❌ |
 | **Truncation auto-continue** | ✅ | ✅ | ❌ | ❌ | ❌ | ➖ | ✅ | ❌ |
 | **Tool param fixer** | ✅ | ✅ | ❌ | ❌ | ❌ | ✅ | ❌ | ⚠️ |
@@ -156,18 +156,29 @@ All items below shipped on branch `cursor/hermes-agent-delegation` (commits `448
 
 ---
 
-## Remaining backlog (P2)
+## Completed backlog (P2 — parity packaging & UX)
+
+Shipped on branch `cursor/hermes-agent-delegation` (P2 parity commit).
+
+| ID | Feature | Implementation |
+|----|---------|----------------|
+| P2-1 | Compact tool schema mode | `src/openai/compact-tools.ts`, `CURSOR_PLAN2API_COMPACT_TOOLS` |
+| P2-2 | Multi-profile CLI accounts | `src/cursor/profile-rotator.ts`, `profiles` in config.yaml |
+| P2-4 | OpenAPI / Swagger spec | `docs/openapi.yaml`, `GET /openapi.json`, `/docs/openapi.yaml` |
+| P2-5 | npm publish readiness | `package.json` files/repository/prepublishOnly, README npm section |
+| P2-6 | GitHub Actions CI | `.github/workflows/ci.yml`, `npm run test:unit` |
+| P2-8 | Web playground | `GET /playground` — `src/handlers/playground.ts` |
+
+Also improved: Anthropic streaming (`src/anthropic/stream.ts`), vision temp-file UX (`src/openai/vision.ts`).
+
+---
+
+## Remaining backlog (P2+)
 
 | ID | Feature | Source | Priority |
 |----|---------|--------|----------|
-| P2-1 | Compact tool schema mode | cursor2api | Low |
-| P2-2 | Multi-profile CLI accounts | wisdgod, zhx47 | Medium — needs CLI research |
 | P2-3 | Outbound HTTP proxy | cursor2api | Low |
-| P2-4 | OpenAPI / Swagger spec | — | Low |
-| P2-5 | npm publish + `npx cursor-plan2api` | composer-api DMG | Medium |
-| P2-6 | GitHub Actions CI | composer-api, cursor2api | Medium |
 | P2-7 | Anthropic `thinking` budget param | cursor2api | Low |
-| P2-8 | Web playground | cursor2api-go | Low |
 | P2-9 | Cursor SDK bridge option | composer-api | Low — dual auth for Dashboard API key users |
 
 ---
@@ -202,8 +213,7 @@ All items below shipped on branch `cursor/hermes-agent-delegation` (commits `448
 ## Suggested next steps
 
 ```text
-Sprint 6 (P2):  GitHub Actions CI → npm publish → multi-profile research
-Sprint 7 (P2):  OpenAPI spec → web playground → compact tool schema
+Sprint 8 (P2+): Outbound HTTP proxy → Anthropic thinking budget → Cursor SDK bridge
 ```
 
 ---

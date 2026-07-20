@@ -8,9 +8,18 @@ import { CursorAgentRunner } from "../cursor/runner.js"
 import { resolveRequestMode, resolveAgentWorkspace, resolveWorkspace } from "../cursor/workspace.js"
 import {
   anthropicToOpenAi,
-  createAnthropicStreamEvents,
   openAiToAnthropic,
 } from "../anthropic/convert.js"
+import {
+  closeOpenContentBlock,
+  createAnthropicStreamState,
+  createMessageEndEvents,
+  createMessageStartEvent,
+  createTextDeltaEvent,
+  createThinkingDeltaEvent,
+  createToolUseBlockEvents,
+  openContentBlock,
+} from "../anthropic/stream.js"
 import type { AnthropicMessagesRequest } from "../anthropic/types.js"
 import { runWithAutoContinue } from "../openai/auto-continue.js"
 import { compressMessages } from "../openai/context-budget.js"
@@ -32,13 +41,16 @@ import {
   parseToolCallsFromText,
 } from "../openai/prompt.js"
 import { createRequestId } from "../openai/response.js"
-import { buildUsage } from "../openai/tokens.js"
+import { shouldEmitReasoning } from "../openai/responses-map.js"
+import { buildUsage, estimateTokens } from "../openai/tokens.js"
 import { applyToolFixes, fixToolCalls } from "../openai/tool-fixer.js"
 import type { OpenAiChatRequest } from "../openai/types.js"
 import { logRequest, logResponse } from "../request-log.js"
 import { readJsonBody, writeSse, endSse } from "./http.js"
 import { authorize, sendError } from "./shared.js"
 import { sendJson } from "./http.js"
+import { resolveEffectiveContext, resolveWorkspaceHeader } from "./request-context.js"
+import type { ProfileRotator } from "../cursor/profile-rotator.js"
 
 type HandlerContext = {
   config: ProxyConfig
@@ -46,6 +58,7 @@ type HandlerContext = {
   semaphore: RequestSemaphore
   sessionStore: CursorSessionStore
   agentPool?: AgentWarmPool
+  profileRotator?: ProfileRotator
 }
 
 const resolveModel = (
@@ -110,7 +123,7 @@ export const handleMessages = async (
     : undefined
 
   const toolsText = execution.injectToolsAsPrompt
-    ? toolsToOpenRouterSystemText(body.tools, body.functions)
+    ? toolsToOpenRouterSystemText(body.tools, body.functions, ctx.config.compactTools)
     : undefined
   const systemParts: Array<{ role: "system"; content: string }> = []
   if (execution.systemPrompt) systemParts.push({ role: "system", content: execution.systemPrompt })
@@ -147,16 +160,22 @@ export const handleMessages = async (
           : resumePrompt
         : fullPrompt
 
-    const headerWorkspace = req.headers["x-cursor-workspace"]
+    const { config: effectiveConfig, profile } = resolveEffectiveContext(
+      ctx.config,
+      ctx.profileRotator,
+    )
+    const workspaceHeader = resolveWorkspaceHeader(profile, req.headers["x-cursor-workspace"])
+    const headerWorkspace = workspaceHeader
     const workspace =
       execution.useHomeWorkspace || execution.cliMode === "agent"
         ? resolveAgentWorkspace(headerWorkspace)
         : resolveWorkspace(
-            ctx.config,
+            effectiveConfig,
             headerWorkspace,
-            execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : false,
+            execution.cliMode === "ask" ? effectiveConfig.chatOnlyWorkspace : false,
           )
-    const runner = new CursorAgentRunner(ctx.config)
+    const runner = new CursorAgentRunner(effectiveConfig)
+    const emitReasoning = shouldEmitReasoning(model)
 
     const invocation = {
       model,
@@ -166,7 +185,7 @@ export const handleMessages = async (
       workspaceDir: workspace.workspaceDir,
       suppressNativeToolCalls: execution.hermesDelegation,
       resumeSessionId,
-      emitReasoning: false,
+      emitReasoning,
     }
 
     logRequest(ctx.config.verboseLogging, "POST", "/v1/messages", {
@@ -267,16 +286,43 @@ const handleAnthropicStreaming = async (
     "Content-Type": "text/event-stream",
   })
 
+  const messageId = `msg_${requestId}`
+  const streamState = createAnthropicStreamState(messageId, model)
+  const inputTokens = estimateTokens(prompt)
+
   let closed = false
   let fullText = ""
   let resolvedModel = model
   let cliUsage: Parameters<typeof buildUsage>[0]
   let cursorSessionId: string | undefined
+  let textBlockIndex: number | undefined
+  let thinkingBlockIndex: number | undefined
 
   const closeStream = (): void => {
     if (closed) return
     closed = true
     endSse(res)
+  }
+
+  const ensureThinkingBlock = (): number => {
+    if (thinkingBlockIndex !== undefined) return thinkingBlockIndex
+    const opened = openContentBlock(streamState, "thinking")
+    writeSse(res, {}, opened.event)
+    thinkingBlockIndex = opened.blockIndex
+    return opened.blockIndex
+  }
+
+  const ensureTextBlock = (): number => {
+    if (textBlockIndex !== undefined) return textBlockIndex
+    if (thinkingBlockIndex !== undefined) {
+      const stopThinking = closeOpenContentBlock(streamState)
+      if (stopThinking) writeSse(res, {}, stopThinking)
+      thinkingBlockIndex = undefined
+    }
+    const opened = openContentBlock(streamState, "text")
+    writeSse(res, {}, opened.event)
+    textBlockIndex = opened.blockIndex
+    return opened.blockIndex
   }
 
   await new Promise<void>((resolve) => {
@@ -285,18 +331,17 @@ const handleAnthropicStreaming = async (
       resolve()
     }
 
+    runner.on("reasoning", ({ text }) => {
+      if (!text || closed) return
+      const index = ensureThinkingBlock()
+      writeSse(res, {}, createThinkingDeltaEvent(index, text))
+    })
+
     runner.on("delta", ({ text }) => {
-      if (!text) return
+      if (!text || closed) return
       fullText += text
-      writeSse(
-        res,
-        {},
-        `event: content_block_delta\ndata: ${JSON.stringify({
-          type: "content_block_delta",
-          index: 0,
-          delta: { type: "text_delta", text },
-        })}\n\n`,
-      )
+      const index = ensureTextBlock()
+      writeSse(res, {}, createTextDeltaEvent(index, text))
     })
 
     runner.on("result", ({ text, model: detectedModel, usage, sessionId }) => {
@@ -316,33 +361,7 @@ const handleAnthropicStreaming = async (
       finish()
     })
 
-    writeSse(
-      res,
-      {},
-      `event: message_start\ndata: ${JSON.stringify({
-        type: "message_start",
-        message: {
-          id: `msg_${requestId}`,
-          type: "message",
-          role: "assistant",
-          model,
-          content: [],
-          stop_reason: null,
-          stop_sequence: null,
-          usage: { input_tokens: 0, output_tokens: 0 },
-        },
-      })}\n\n`,
-    )
-
-    writeSse(
-      res,
-      {},
-      `event: content_block_start\ndata: ${JSON.stringify({
-        type: "content_block_start",
-        index: 0,
-        content_block: { type: "text", text: "" },
-      })}\n\n`,
-    )
+    writeSse(res, {}, createMessageStartEvent(messageId, model, inputTokens))
 
     runner
       .runStream(invocation)
@@ -368,14 +387,34 @@ const handleAnthropicStreaming = async (
           ctx.sessionStore.set(sessionKey, cursorSessionId)
         }
 
-        const events = createAnthropicStreamEvents(
-          requestId,
-          resolvedModel,
-          jsonText,
-          finalized.toolCalls,
-          usage,
-        )
-        for (const event of events.slice(2)) {
+        if (thinkingBlockIndex !== undefined && textBlockIndex === undefined) {
+          const stopThinking = closeOpenContentBlock(streamState)
+          if (stopThinking) writeSse(res, {}, stopThinking)
+          thinkingBlockIndex = undefined
+        }
+
+        if (textBlockIndex !== undefined) {
+          const stopText = closeOpenContentBlock(streamState)
+          if (stopText) writeSse(res, {}, stopText)
+          textBlockIndex = undefined
+        } else if (!finalized.toolCalls?.length && jsonText) {
+          const opened = openContentBlock(streamState, "text")
+          writeSse(res, {}, opened.event)
+          writeSse(res, {}, createTextDeltaEvent(opened.blockIndex, jsonText))
+          writeSse(
+            res,
+            {},
+            formatAnthropicBlockStop(opened.blockIndex),
+          )
+        }
+
+        if (finalized.toolCalls?.length) {
+          for (const event of createToolUseBlockEvents(streamState, finalized.toolCalls)) {
+            writeSse(res, {}, event)
+          }
+        }
+
+        for (const event of createMessageEndEvents(finalized.toolCalls, usage)) {
           writeSse(res, {}, event)
         }
 
@@ -407,3 +446,6 @@ const handleAnthropicStreaming = async (
       })
   })
 }
+
+const formatAnthropicBlockStop = (index: number): string =>
+  `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index })}\n\n`

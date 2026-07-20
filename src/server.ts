@@ -8,6 +8,7 @@ import {
 import type { ProxyConfig } from "./config.js"
 import { RequestSemaphore } from "./concurrency.js"
 import { AgentWarmPool } from "./cursor/agent-pool.js"
+import { ProfileRotator } from "./cursor/profile-rotator.js"
 import { CursorSessionStore } from "./cursor/session-store.js"
 import { warmupCursorCli } from "./cursor/warmup.js"
 import {
@@ -20,6 +21,8 @@ import { sendJson } from "./handlers/http.js"
 import { handleImageGenerations } from "./handlers/images.js"
 import { handleMessages } from "./handlers/messages.js"
 import { handleAdmin, handleAdminLogs, handleAdminLogsStream } from "./handlers/admin.js"
+import { handleDocsRedirect, handleOpenApiJson, handleOpenApiYaml } from "./handlers/docs.js"
+import { handlePlayground } from "./handlers/playground.js"
 import { handleResponses } from "./handlers/responses.js"
 import { sendError } from "./handlers/shared.js"
 import { handleUsage } from "./handlers/usage.js"
@@ -31,6 +34,7 @@ type ServerContext = {
   semaphore: RequestSemaphore
   sessionStore: CursorSessionStore
   agentPool: AgentWarmPool
+  profileRotator: ProfileRotator
 }
 
 const CORS_HEADERS: Record<string, string> = {
@@ -106,6 +110,26 @@ export const createProxyServer = (ctx: ServerContext): Server => {
         return
       }
 
+      if (method === "GET" && pathname === "/playground") {
+        handlePlayground(req, res, ctx)
+        return
+      }
+
+      if (method === "GET" && pathname === "/openapi.json") {
+        handleOpenApiJson(req, res, ctx)
+        return
+      }
+
+      if (method === "GET" && pathname === "/docs/openapi.yaml") {
+        handleOpenApiYaml(req, res, ctx)
+        return
+      }
+
+      if (method === "GET" && pathname === "/docs") {
+        handleDocsRedirect(req, res, ctx)
+        return
+      }
+
       if (method === "POST" && pathname === "/v1/messages") {
         await handleMessages(req, res, ctx)
         return
@@ -156,6 +180,11 @@ export const startServer = async (
 ): Promise<Server> => {
   const sessionStore = new CursorSessionStore(config.sessionTtlMs)
   const agentPool = new AgentWarmPool(config)
+  const profileRotator = new ProfileRotator(
+    config.profiles,
+    config.profileRotation,
+    config.agentBin,
+  )
 
   if (config.warmupOnStart) {
     await warmupCursorCli(config)
@@ -171,6 +200,7 @@ export const startServer = async (
     semaphore: new RequestSemaphore(config.maxConcurrentRequests),
     sessionStore,
     agentPool,
+    profileRotator,
   })
 
   await new Promise<void>((resolve, reject) => {

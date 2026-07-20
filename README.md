@@ -20,6 +20,7 @@
 ```
 
 [![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen)]()
+[![CI](https://github.com/alfons-fhl/Cursor-Plan2API/actions/workflows/ci.yml/badge.svg)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-412991)]()
 [![Hermes Agent](https://img.shields.io/badge/Hermes%20Agent-compatible-7C3AED)]()
@@ -87,6 +88,10 @@ cursor-plan2api/auto
 | 📋 **JSON mode** | `response_format: { type: "json_object" }` |
 | 📈 **Stream usage** | `stream_options.include_usage` in final SSE chunk |
 | 🛠️ **Admin log UI** | `GET /admin` + live SSE tail at `/admin/logs/stream` |
+| 🎮 **Web playground** | `GET /playground` — chat UI with model picker & streaming |
+| 📄 **OpenAPI 3.1** | `GET /openapi.json`, `GET /docs/openapi.yaml` |
+| 🔄 **Multi-profile rotation** | Round-robin / LRU across multiple `agent login` sessions |
+| 🗜️ **Compact tool schemas** | `CURSOR_PLAN2API_COMPACT_TOOLS` for large tool arrays |
 | 💰 **Cost estimates** | Per-model `estimated_cost_usd` in `/v1/usage` |
 | 📄 **config.yaml** | Optional yaml config merged with env vars |
 | 🚀 **Service templates** | systemd + launchd deploy examples |
@@ -108,6 +113,21 @@ agent status
 ---
 
 ## ⚡ Quick Start
+
+### Install from npm (publish-ready)
+
+```bash
+npm install -g cursor-plan2api
+cursor-plan2api
+```
+
+Or run without global install:
+
+```bash
+npx cursor-plan2api
+```
+
+### Install from source
 
 ```bash
 npm install
@@ -235,7 +255,7 @@ curl -sN http://127.0.0.1:8787/v1/messages \
 | Feature | Support |
 |---------|---------|
 | `tool_use` / `tool_result` blocks | Mapped to OpenAI `tool_calls` internally |
-| Streaming | `message_start`, `content_block_delta`, `message_stop` |
+| Streaming | `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop` |
 | Vision | Base64 `image` content blocks (same temp-file path as chat) |
 | Thinking models | `thinking` blocks when CLI emits thinking output |
 
@@ -367,7 +387,28 @@ curl -s http://127.0.0.1:8787/v1/messages \
   -d '{"model":"composer-2.5","max_tokens":1024,"messages":[{"role":"user","content":"Hi"}]}'
 ```
 
-Supports `stream: true` (Anthropic SSE: `message_start`, `content_block_delta`, `message_stop`). Tool use blocks map to OpenAI `tool_calls` internally.
+Supports `stream: true` (Anthropic SSE: `message_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop`). Tool use blocks map to OpenAI `tool_calls` internally.
+
+### OpenAPI & playground
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /openapi.json` | OpenAPI 3.1 spec (JSON) |
+| `GET /docs/openapi.yaml` | OpenAPI 3.1 spec (YAML) |
+| `GET /docs` | Redirect to `/docs/openapi.yaml` |
+| `GET /playground` | Browser chat UI (model picker + stream toggle) |
+
+Source: [`docs/openapi.yaml`](docs/openapi.yaml). Open `http://127.0.0.1:8787/playground` after starting the gateway.
+
+### Vision / multimodal notes
+
+The Cursor CLI does not accept raw base64 image bytes on the command line. Cursor-Plan2API decodes `image_url` / Anthropic `image` blocks to **temp files** and injects file paths into the prompt (up to **1 MB** per image, PNG/JPEG/GIF/WebP/BMP/HEIC).
+
+- Multiple images per message are supported (unique temp filenames).
+- Vision prompt injection tells the model to read paths directly.
+- Temp dirs are removed after each request via `cleanup()`.
+
+Native CLI image attachment flags are not exposed yet; file-path prompting is the supported path today.
 
 ### `POST /v1/responses`
 
@@ -394,6 +435,7 @@ curl http://127.0.0.1:8787/v1/usage | jq '.estimated_cost_usd_total, .models'
 | Endpoint | Description |
 |----------|-------------|
 | `GET /admin` | HTML request log UI with live SSE tail |
+| `GET /playground` | HTML chat playground |
 | `GET /admin/logs` | JSON log (`?limit=100`, default 100) |
 | `GET /admin/logs/stream` | SSE stream of new requests |
 
@@ -499,6 +541,9 @@ verbose: false
 | `CURSOR_PLAN2API_SESSION_TTL_MS` | `3600000` | Session store TTL (1 hour) |
 | `CURSOR_PLAN2API_MAX_HISTORY_TOKENS` | `80000` | Context compression budget (head+tail truncation) |
 | `CURSOR_PLAN2API_AUTO_CONTINUE_MAX` | `3` | Auto-continue retries on truncated output |
+| `CURSOR_PLAN2API_COMPACT_TOOLS` | `false` | Compact tool schemas in prompts |
+| `CURSOR_PLAN2API_PROFILE_ROTATION` | `none` | `round-robin`, `lru`, or `none` |
+| `CURSOR_PLAN2API_PROFILES` | — | JSON array or `name:bin:workspace` tuples |
 
 #### Model catalog
 
@@ -597,7 +642,8 @@ tail -f ~/.cursor-plan2api/server.log
 ## 🧪 Tests
 
 ```bash
-npm run test              # full integration suite
+npm run test              # full integration suite (requires running gateway)
+npm run test:unit         # unit tests only (CI-safe)
 npm run test:edge         # edge cases
 npm run test:all          # full + edge
 ```

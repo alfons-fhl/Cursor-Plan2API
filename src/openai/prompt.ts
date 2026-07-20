@@ -1,4 +1,5 @@
 import type { OpenAiMessage } from "./types.js"
+import { maybeCompactTools } from "./compact-tools.js"
 import {
   createImageAttachmentContext,
   extractImageParts,
@@ -44,15 +45,21 @@ export const messageContentToText = (content: OpenAiMessage["content"]): string 
 export const toolsToSystemText = (
   tools?: Array<{ type?: string; function?: Record<string, unknown> }>,
   functions?: Array<Record<string, unknown>>,
+  compactTools = false,
 ): string | undefined => {
+  const { tools: effectiveTools, functions: effectiveFunctions } = maybeCompactTools(
+    tools,
+    functions,
+    compactTools,
+  )
   const defs: Array<Record<string, unknown>> = []
 
-  for (const tool of tools ?? []) {
+  for (const tool of effectiveTools ?? []) {
     const fn = tool.type === "function" ? tool.function : tool
     if (fn) defs.push(fn)
   }
 
-  for (const fn of functions ?? []) {
+  for (const fn of effectiveFunctions ?? []) {
     defs.push(fn)
   }
 
@@ -86,12 +93,14 @@ export const buildPromptFromMessages = async (
   const systemParts: string[] = []
   const conversation: string[] = []
   const imageContext = await createImageAttachmentContext()
+  let imageCounter = 0
 
   try {
     for (const message of messages) {
       const imageParts = extractImageParts(message.content)
-      for (const [index, part] of imageParts.entries()) {
-        await resolveImagePart(part, index, imageContext)
+      for (const part of imageParts) {
+        await resolveImagePart(part, imageCounter, imageContext)
+        imageCounter += 1
       }
 
       const text = messageContentToText(message.content)

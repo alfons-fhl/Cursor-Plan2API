@@ -6,6 +6,7 @@ import { parse as parseYaml } from "yaml"
 import { z } from "zod"
 
 import { parseExtraModels } from "./cursor/models.js"
+import { parseProfilesEnv, type AgentProfile } from "./cursor/profile-rotator.js"
 
 const boolFromEnv = (value: string | undefined, defaultValue: boolean): boolean => {
   if (value === undefined || value.trim() === "") return defaultValue
@@ -52,6 +53,20 @@ const configSchema = z.object({
   maxHistoryTokens: z.coerce.number().int().positive().default(80_000),
   /** Max auto-continue attempts when output is truncated. */
   autoContinueMax: z.coerce.number().int().min(0).max(10).default(3),
+  /** Truncate tool descriptions when injecting large tool arrays into prompts. */
+  compactTools: z.boolean().default(false),
+  /** Profile rotation strategy across multiple CLI login sessions. */
+  profileRotation: z.enum(["round-robin", "lru", "none"]).default("none"),
+  /** Named CLI profiles (each may use a different agent binary / workspace). */
+  profiles: z
+    .array(
+      z.object({
+        name: z.string(),
+        agentBin: z.string().optional(),
+        workspace: z.string().optional(),
+      }),
+    )
+    .default([]),
 })
 
 export type ProxyConfig = z.infer<typeof configSchema>
@@ -91,6 +106,9 @@ const yamlKeyMap: Record<string, keyof z.input<typeof configSchema>> = {
   extra_models: "extraModels",
   max_history_tokens: "maxHistoryTokens",
   auto_continue_max: "autoContinueMax",
+  compact_tools: "compactTools",
+  profile_rotation: "profileRotation",
+  profiles: "profiles",
 }
 
 const normalizeYamlValue = (key: string, value: unknown): unknown => {
@@ -106,6 +124,26 @@ const normalizeYamlValue = (key: string, value: unknown): unknown => {
       }
       return null
     }).filter(Boolean)
+  }
+  if (key === "profiles" && Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (!item || typeof item !== "object") return null
+        const record = item as Record<string, unknown>
+        const name = String(record.name ?? "").trim()
+        if (!name) return null
+        const profile: AgentProfile = { name }
+        if (typeof record.agent_bin === "string" && record.agent_bin.trim()) {
+          profile.agentBin = record.agent_bin.trim()
+        } else if (typeof record.agentBin === "string" && record.agentBin.trim()) {
+          profile.agentBin = record.agentBin.trim()
+        }
+        if (typeof record.workspace === "string" && record.workspace.trim()) {
+          profile.workspace = record.workspace.trim()
+        }
+        return profile
+      })
+      .filter(Boolean)
   }
   return value
 }
@@ -174,6 +212,14 @@ const buildEnvConfig = (): Record<string, unknown> => ({
   extraModels: parseExtraModels(env("EXTRA_MODELS")),
   maxHistoryTokens: env("MAX_HISTORY_TOKENS"),
   autoContinueMax: env("AUTO_CONTINUE_MAX"),
+  compactTools: boolFromEnv(env("COMPACT_TOOLS"), false),
+  profileRotation:
+    env("PROFILE_ROTATION") === "lru"
+      ? "lru"
+      : env("PROFILE_ROTATION") === "round-robin"
+        ? "round-robin"
+        : "none",
+  profiles: parseProfilesEnv(env("PROFILES")),
 })
 
 /**

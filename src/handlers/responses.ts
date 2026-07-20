@@ -38,6 +38,8 @@ import type { OpenAiChatRequest } from "../openai/types.js"
 import { logRequest, logResponse } from "../request-log.js"
 import { readJsonBody, writeSse, endSse } from "./http.js"
 import { authorize, sendError } from "./shared.js"
+import { resolveEffectiveContext, resolveWorkspaceHeader } from "./request-context.js"
+import type { ProfileRotator } from "../cursor/profile-rotator.js"
 import { sendJson } from "./http.js"
 
 type HandlerContext = {
@@ -46,6 +48,7 @@ type HandlerContext = {
   semaphore: RequestSemaphore
   sessionStore: CursorSessionStore
   agentPool?: AgentWarmPool
+  profileRotator?: ProfileRotator
 }
 
 const resolveModel = (
@@ -129,7 +132,7 @@ export const handleResponses = async (
     : undefined
 
   const toolsText = execution.injectToolsAsPrompt
-    ? toolsToOpenRouterSystemText(chatBody.tools, chatBody.functions)
+    ? toolsToOpenRouterSystemText(chatBody.tools, chatBody.functions, ctx.config.compactTools)
     : undefined
   const systemParts: Array<{ role: "system"; content: string }> = []
   if (execution.systemPrompt) {
@@ -175,16 +178,20 @@ export const handleResponses = async (
           : resumePrompt
         : fullPrompt
 
-    const headerWorkspace = req.headers["x-cursor-workspace"]
+    const { config: effectiveConfig, profile } = resolveEffectiveContext(
+      ctx.config,
+      ctx.profileRotator,
+    )
+    const headerWorkspace = resolveWorkspaceHeader(profile, req.headers["x-cursor-workspace"])
     const workspace =
       execution.useHomeWorkspace || execution.cliMode === "agent"
         ? resolveAgentWorkspace(headerWorkspace)
         : resolveWorkspace(
-            ctx.config,
+            effectiveConfig,
             headerWorkspace,
-            execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : false,
+            execution.cliMode === "ask" ? effectiveConfig.chatOnlyWorkspace : false,
           )
-    const runner = new CursorAgentRunner(ctx.config)
+    const runner = new CursorAgentRunner(effectiveConfig)
     const emitReasoning = shouldEmitReasoning(
       model,
       chatBody.reasoning_effort ?? mapped.reasoningEffort,

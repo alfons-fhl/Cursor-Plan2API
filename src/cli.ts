@@ -55,6 +55,9 @@ Environment:
   CURSOR_PLAN2API_AGENT_BIN=agent
   CURSOR_PLAN2API_MAX_HISTORY_TOKENS=80000
   CURSOR_PLAN2API_AUTO_CONTINUE_MAX=3
+  CURSOR_PLAN2API_COMPACT_TOOLS=false
+  CURSOR_PLAN2API_PROFILE_ROTATION=none
+  CURSOR_PLAN2API_PROFILES=            JSON array or name:bin:workspace tuples
 
 Config file (optional, env overrides yaml):
   ~/.cursor-plan2api/config.yaml
@@ -73,6 +76,10 @@ Endpoints:
   GET  /admin
   GET  /admin/logs
   GET  /admin/logs/stream
+  GET  /playground
+  GET  /openapi.json
+  GET  /docs/openapi.yaml
+  GET  /docs
 
 Headers:
   X-Cursor-Mode: ask|plan|agent

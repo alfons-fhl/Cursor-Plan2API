@@ -13,7 +13,19 @@ const MIME_TO_EXT: Record<string, string> = {
   "image/jpg": "jpg",
   "image/gif": "gif",
   "image/webp": "webp",
+  "image/bmp": "bmp",
+  "image/heic": "heic",
+  "image/heif": "heif",
+  "image/tiff": "tiff",
 }
+
+/** Prompt prefix injected when images are attached for CLI vision tasks. */
+export const VISION_PROMPT_PREFIX = [
+  "Vision task: The user attached image file(s) saved on disk.",
+  "Read and analyze each file path below using your vision capability.",
+  "When multiple images are present, refer to them by number (Image 1, Image 2, …).",
+  "Describe visible content accurately; do not claim you cannot see images when paths are provided.",
+].join(" ")
 
 export type ResolvedImage = {
   path: string
@@ -135,9 +147,5 @@ export const formatImageAttachmentsForPrompt = (
       `- Image ${index + 1} (${image.mimeType}, ${image.sizeBytes} bytes): ${image.path}`,
   )
 
-  return [
-    "The user attached image file(s). Read and analyze them directly:",
-    ...lines,
-    "",
-  ].join("\n")
+  return [`${VISION_PROMPT_PREFIX}`, ...lines, ""].join("\n")
 }

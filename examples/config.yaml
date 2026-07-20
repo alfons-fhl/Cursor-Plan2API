@@ -32,6 +32,17 @@ include_model_catalog: true  # Merge ~189 built-in model ids into GET /v1/models
 # Or comma-separated string (same as CURSOR_PLAN2API_EXTRA_MODELS):
 # extra_models: "my-model=My Model,another-id"
 
+# Multi-profile rotation (separate `agent login` per profile)
+# profile_rotation: round-robin   # round-robin | lru | none
+# profiles:
+#   - name: work
+#     agent_bin: /path/to/work-agent
+#     workspace: /path/to/work/repo
+#   - name: personal
+#     agent_bin: agent
+
+# compact_tools: false           # Truncate tool descriptions in large tool arrays
+
 # ── Performance ───────────────────────────────────────────────────────────────
 agent_pool: false            # Keep warm CLI slots (reduces cold-start latency)
 agent_pool_size: 2

@@ -44,6 +44,8 @@ import { logRequest, logResponse } from "../request-log.js"
 import { readJsonBody, writeSse, endSse } from "./http.js"
 import { authorize, authorizeHealth, sendError } from "./shared.js"
 import { sendJson } from "./http.js"
+import { resolveEffectiveContext, resolveWorkspaceHeader } from "./request-context.js"
+import type { ProfileRotator } from "../cursor/profile-rotator.js"
 
 type HandlerContext = {
   config: ProxyConfig
@@ -51,6 +53,7 @@ type HandlerContext = {
   semaphore: RequestSemaphore
   sessionStore: CursorSessionStore
   agentPool?: AgentWarmPool
+  profileRotator?: ProfileRotator
 }
 
 /**
@@ -83,6 +86,9 @@ export const handleHealth = (
     recommended_models: RECOMMENDED_MODELS.map((model) => model.id),
     embedding_provider: ctx.config.embeddingProvider,
     agent_pool: ctx.agentPool?.getStats() ?? { enabled: false },
+    profile_rotation: ctx.config.profileRotation,
+    profiles: ctx.profileRotator?.listNames() ?? [],
+    compact_tools: ctx.config.compactTools,
     endpoints: [
       "GET /health",
       "GET /v1/models",
@@ -94,6 +100,9 @@ export const handleHealth = (
       "POST /v1/images/generations",
       "GET /admin",
       "GET /admin/logs",
+      "GET /playground",
+      "GET /openapi.json",
+      "GET /docs/openapi.yaml",
     ],
     timestamp: new Date().toISOString(),
   })
@@ -218,7 +227,7 @@ export const handleChatCompletions = async (
     : undefined
 
   const toolsText = execution.injectToolsAsPrompt
-    ? toolsToOpenRouterSystemText(body.tools, body.functions)
+    ? toolsToOpenRouterSystemText(body.tools, body.functions, ctx.config.compactTools)
     : undefined
   const systemParts: Array<{ role: "system"; content: string }> = []
   if (execution.systemPrompt) {
@@ -264,16 +273,20 @@ export const handleChatCompletions = async (
           : resumePrompt
         : fullPrompt
 
-    const headerWorkspace = req.headers["x-cursor-workspace"]
+    const { config: effectiveConfig, profile } = resolveEffectiveContext(
+      ctx.config,
+      ctx.profileRotator,
+    )
+    const headerWorkspace = resolveWorkspaceHeader(profile, req.headers["x-cursor-workspace"])
     const workspace =
       execution.useHomeWorkspace || execution.cliMode === "agent"
         ? resolveAgentWorkspace(headerWorkspace)
         : resolveWorkspace(
-            ctx.config,
+            effectiveConfig,
             headerWorkspace,
-            execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : false,
+            execution.cliMode === "ask" ? effectiveConfig.chatOnlyWorkspace : false,
           )
-    const runner = new CursorAgentRunner(ctx.config)
+    const runner = new CursorAgentRunner(effectiveConfig)
     const emitReasoning = shouldEmitReasoning(model, body.reasoning_effort)
 
     const invocation = {

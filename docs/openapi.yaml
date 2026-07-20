@@ -1,0 +1,503 @@
+openapi: 3.1.0
+info:
+  title: Cursor-Plan2API
+  version: 0.3.0
+  description: |
+    OpenAI-compatible HTTP bridge for the Cursor CLI subscription (`agent login`).
+    Also exposes Anthropic Messages API and OpenAI Responses API.
+  license:
+    name: MIT
+servers:
+  - url: http://127.0.0.1:8787
+    description: Local gateway (default)
+security:
+  - bearerAuth: []
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      security: []
+      tags: [System]
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /v1/models:
+    get:
+      summary: List models
+      operationId: listModels
+      tags: [Models]
+      responses:
+        "200":
+          description: OpenAI-compatible model list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelList"
+  /v1/usage:
+    get:
+      summary: Subscription usage
+      operationId: getUsage
+      tags: [Usage]
+      responses:
+        "200":
+          description: Cursor subscription usage with cost estimates
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/chat/completions:
+    post:
+      summary: Chat completions
+      operationId: createChatCompletion
+      tags: [Chat]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatCompletionRequest"
+      responses:
+        "200":
+          description: Completion or SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatCompletionResponse"
+            text/event-stream:
+              schema:
+                type: string
+  /v1/messages:
+    post:
+      summary: Anthropic Messages API
+      operationId: createMessage
+      tags: [Anthropic]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnthropicMessagesRequest"
+      responses:
+        "200":
+          description: Message or Anthropic SSE stream
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnthropicMessageResponse"
+            text/event-stream:
+              schema:
+                type: string
+  /v1/responses:
+    post:
+      summary: OpenAI Responses API
+      operationId: createResponse
+      tags: [Responses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResponsesRequest"
+      responses:
+        "200":
+          description: Response object or SSE stream
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /v1/embeddings:
+    post:
+      summary: Create embeddings
+      operationId: createEmbeddings
+      tags: [Embeddings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbeddingsRequest"
+      responses:
+        "200":
+          description: Embedding vectors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbeddingsResponse"
+  /v1/images/generations:
+    post:
+      summary: Generate images
+      operationId: createImageGeneration
+      tags: [Images]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ImageGenerationRequest"
+      responses:
+        "200":
+          description: Generated image metadata
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /admin:
+    get:
+      summary: Admin request log UI
+      operationId: getAdmin
+      tags: [Admin]
+      responses:
+        "200":
+          description: HTML admin page
+          content:
+            text/html:
+              schema:
+                type: string
+  /admin/logs:
+    get:
+      summary: Request log JSON
+      operationId: getAdminLogs
+      tags: [Admin]
+      parameters:
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 100
+      responses:
+        "200":
+          description: Recent request log entries
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+  /admin/logs/stream:
+    get:
+      summary: Live request log SSE
+      operationId: streamAdminLogs
+      tags: [Admin]
+      responses:
+        "200":
+          description: Server-sent events stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+  /playground:
+    get:
+      summary: Web playground
+      operationId: getPlayground
+      tags: [Admin]
+      responses:
+        "200":
+          description: HTML chat playground
+          content:
+            text/html:
+              schema:
+                type: string
+  /openapi.json:
+    get:
+      summary: OpenAPI document (JSON)
+      operationId: getOpenApiJson
+      tags: [Docs]
+      responses:
+        "200":
+          description: OpenAPI 3.1 specification
+          content:
+            application/json:
+              schema:
+                type: object
+  /docs/openapi.yaml:
+    get:
+      summary: OpenAPI document (YAML)
+      operationId: getOpenApiYaml
+      tags: [Docs]
+      responses:
+        "200":
+          description: OpenAPI YAML source
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /docs:
+    get:
+      summary: Redirect to OpenAPI YAML
+      operationId: getDocs
+      tags: [Docs]
+      responses:
+        "302":
+          description: Redirect to /docs/openapi.yaml
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Optional when CURSOR_PLAN2API_API_KEY is unset
+  schemas:
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            code:
+              type: string
+              nullable: true
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        provider:
+          type: string
+        cli_version:
+          type: string
+        default_model:
+          type: string
+        recommended_models:
+          type: array
+          items:
+            type: string
+        endpoints:
+          type: array
+          items:
+            type: string
+    ModelList:
+      type: object
+      properties:
+        object:
+          type: string
+          example: list
+        recommended:
+          type: array
+          items:
+            type: string
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              object:
+                type: string
+              created:
+                type: integer
+              owned_by:
+                type: string
+    ChatCompletionRequest:
+      type: object
+      required: [messages]
+      properties:
+        model:
+          type: string
+          example: composer-2.5
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+        stream:
+          type: boolean
+          default: false
+        tools:
+          type: array
+          items:
+            type: object
+        stream_options:
+          type: object
+          properties:
+            include_usage:
+              type: boolean
+        response_format:
+          type: object
+        mode:
+          type: string
+          enum: [ask, plan, agent]
+        reasoning_effort:
+          type: string
+    ChatMessage:
+      type: object
+      required: [role]
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant, tool, developer, function]
+        content:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+        tool_calls:
+          type: array
+          items:
+            type: object
+        tool_call_id:
+          type: string
+    ChatCompletionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        object:
+          type: string
+          example: chat.completion
+        model:
+          type: string
+        choices:
+          type: array
+          items:
+            type: object
+        usage:
+          type: object
+          properties:
+            prompt_tokens:
+              type: integer
+            completion_tokens:
+              type: integer
+            total_tokens:
+              type: integer
+    AnthropicMessagesRequest:
+      type: object
+      required: [model, messages]
+      properties:
+        model:
+          type: string
+        max_tokens:
+          type: integer
+        stream:
+          type: boolean
+        system:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              content:
+                oneOf:
+                  - type: string
+                  - type: array
+                    items:
+                      type: object
+        tools:
+          type: array
+          items:
+            type: object
+    AnthropicMessageResponse:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          example: message
+        role:
+          type: string
+          example: assistant
+        model:
+          type: string
+        content:
+          type: array
+          items:
+            type: object
+        stop_reason:
+          type: string
+          nullable: true
+        usage:
+          type: object
+          properties:
+            input_tokens:
+              type: integer
+            output_tokens:
+              type: integer
+    ResponsesRequest:
+      type: object
+      properties:
+        model:
+          type: string
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: object
+        instructions:
+          type: string
+        stream:
+          type: boolean
+    EmbeddingsRequest:
+      type: object
+      required: [input]
+      properties:
+        model:
+          type: string
+        input:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+        dimensions:
+          type: integer
+        encoding_format:
+          type: string
+          enum: [float, base64]
+    EmbeddingsResponse:
+      type: object
+      properties:
+        object:
+          type: string
+          example: list
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              object:
+                type: string
+              embedding:
+                type: array
+                items:
+                  type: number
+              index:
+                type: integer
+        usage:
+          type: object
+    ImageGenerationRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+        model:
+          type: string
+        n:
+          type: integer
+        size:
+          type: string
+          example: 1024x1024
+        response_format:
+          type: string
+          enum: [url, b64_json]

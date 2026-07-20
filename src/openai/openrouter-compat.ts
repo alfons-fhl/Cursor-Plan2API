@@ -1,5 +1,6 @@
 import type { ParsedToolCall } from "../cursor/types.js"
 import type { OpenAiChatRequest, OpenAiToolCall } from "./types.js"
+import { maybeCompactTools } from "./compact-tools.js"
 import { parseToolCallsFromText } from "./prompt.js"
 import { fixToolCalls } from "./tool-fixer.js"
 
@@ -130,15 +131,21 @@ export const stripToolCallJson = (text: string): string => {
 export const toolsToOpenRouterSystemText = (
   tools?: OpenAiChatRequest["tools"],
   functions?: OpenAiChatRequest["functions"],
+  compactTools = false,
 ): string | undefined => {
+  const { tools: effectiveTools, functions: effectiveFunctions } = maybeCompactTools(
+    tools,
+    functions,
+    compactTools,
+  )
   const defs: Array<Record<string, unknown>> = []
 
-  for (const tool of tools ?? []) {
+  for (const tool of effectiveTools ?? []) {
     const fn = tool.type === "function" ? tool.function : tool
     if (fn) defs.push(fn)
   }
 
-  for (const fn of functions ?? []) {
+  for (const fn of effectiveFunctions ?? []) {
     defs.push(fn)
   }
 

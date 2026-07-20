@@ -3,20 +3,53 @@
   "version": "0.3.0",
   "description": "Cursor-Plan2API — Hermes Agent & OpenCode compatible OpenAI API for your Cursor.ai subscription",
   "type": "module",
+  "license": "MIT",
+  "author": "alfons-fhl",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/alfons-fhl/Cursor-Plan2API.git"
+  },
+  "homepage": "https://github.com/alfons-fhl/Cursor-Plan2API#readme",
+  "bugs": {
+    "url": "https://github.com/alfons-fhl/Cursor-Plan2API/issues"
+  },
+  "keywords": [
+    "cursor",
+    "openai",
+    "api",
+    "hermes-agent",
+    "opencode",
+    "anthropic",
+    "cli",
+    "proxy",
+    "chat-completions",
+    "composer"
+  ],
+  "files": [
+    "dist",
+    "docs/openapi.yaml",
+    "examples",
+    "README.md"
+  ],
   "bin": {
     "cursor-plan2api": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc",
+    "prepublishOnly": "npm run build",
     "start": "node dist/cli.js",
     "dev": "tsx src/cli.ts",
     "test": "node scripts/full-test.mjs",
+    "test:unit": "node scripts/full-test.mjs --unit-only",
     "test:edge": "node scripts/edge-test.mjs",
     "test:models": "node scripts/model-matrix-test.mjs",
     "test:all": "node scripts/full-test.mjs && node scripts/edge-test.mjs"
   },
   "engines": {
     "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@xenova/transformers": "^2.17.2",
