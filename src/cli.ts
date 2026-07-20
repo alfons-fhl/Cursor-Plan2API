@@ -34,6 +34,7 @@ Environment:
   CURSOR_PLAN2API_PORT=8787
   CURSOR_PLAN2API_DEFAULT_MODEL=composer-2.5
   CURSOR_PLAN2API_MODE=ask
+  CURSOR_PLAN2API_CLIENT_COMPAT=openrouter
   CURSOR_PLAN2API_CHAT_ONLY=true
   CURSOR_PLAN2API_STDIN=true
   CURSOR_PLAN2API_MAX_CONCURRENT=4
@@ -46,6 +47,7 @@ Environment:
   CURSOR_PLAN2API_API_KEY=            Optional local bearer token
   CURSOR_PLAN2API_EXTRA_MODELS=        Comma-separated extra model ids for /v1/models
   CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG=true  Include built-in Cursor model catalog
+  CURSOR_PLAN2API_SESSION_RESUME=true
   CURSOR_PLAN2API_WARMUP_ON_START=true
   CURSOR_PLAN2API_AGENT_POOL=0
   CURSOR_PLAN2API_AGENT_POOL_SIZE=2
@@ -70,6 +72,7 @@ Endpoints:
   POST /v1/images/generations
   GET  /admin
   GET  /admin/logs
+  GET  /admin/logs/stream
 
 Headers:
   X-Cursor-Mode: ask|plan|agent

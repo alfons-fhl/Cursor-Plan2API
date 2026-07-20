@@ -1,35 +1,55 @@
 # Cursor-Plan2API configuration
 # Copy to ~/.cursor-plan2api/config.yaml or ./config.yaml
-# Environment variables override these values.
+# Environment variables override these values (env wins on conflict).
 
+# ── Server ──────────────────────────────────────────────────────────────────
 host: 127.0.0.1
 port: 8787
+
+# ── Model & mode ────────────────────────────────────────────────────────────
 default_model: composer-2.5
-mode: ask
+mode: ask                    # ask | plan | agent
 
-# Context & continuation
-max_history_tokens: 80000
-auto_continue_max: 3
-
-# Optional local API key
-# api_key: your-secret-key
-
-# Client compatibility: openrouter | delegate
+# Client compatibility:
+#   openrouter — Hermes Agent tool loop (model returns tool_calls, client executes)
+#   delegate   — Cursor executes files/shell directly
 client_compat: openrouter
 
-# Session resume for long conversations
+# ── Context & continuation ──────────────────────────────────────────────────
+max_history_tokens: 80000    # Compress history above this token budget
+auto_continue_max: 3         # Retry truncated outputs up to N times
+
+# ── Session resume ────────────────────────────────────────────────────────────
 session_resume: true
 session_resume_min_chars: 12000
+# session_ttl_ms: 3600000    # Session store TTL (default 1 hour)
 
-# Model catalog
-include_model_catalog: true
-# extra_models:
+# ── Model catalog ─────────────────────────────────────────────────────────────
+include_model_catalog: true  # Merge ~189 built-in model ids into GET /v1/models
+# extra_models:              # Add models not yet in CLI or catalog
 #   - id: custom-model
 #     name: Custom Model
+# Or comma-separated string (same as CURSOR_PLAN2API_EXTRA_MODELS):
+# extra_models: "my-model=My Model,another-id"
 
-# Agent pool (warm CLI slots)
-agent_pool: false
+# ── Performance ───────────────────────────────────────────────────────────────
+agent_pool: false            # Keep warm CLI slots (reduces cold-start latency)
 agent_pool_size: 2
+warmup_on_start: true
+# max_concurrent: 4
+# timeout_ms: 300000
+# rate_limit_retries: 3
+# rate_limit_delay_ms: 2000
+# plan_fast: true            # Plan mode fast-path (~2× faster)
 
-# Logging
-verbose: false
+# ── Embeddings & images ───────────────────────────────────────────────────────
+# embedding_provider: semantic   # semantic (Xenova) | local (hash-based)
+# embedding_model: Xenova/all-MiniLM-L6-v2
+# embedding_dims: 384
+# image_model: composer-2.5
+
+# ── Security & logging ────────────────────────────────────────────────────────
+# api_key: your-secret-key     # Require Bearer token on all endpoints
+verbose: false                 # Capture requests in admin log ring buffer
+# health_public: false         # Expose detailed /health without API key
+# cors: true

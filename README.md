@@ -212,7 +212,34 @@ opencode run -m cursor-plan2api/composer-2.5-fast "Quick task"
 opencode run -m cursor-plan2api/auto "Auto route"
 ```
 
-> **Note:** ~15–20s per turn is normal — each request spawns a new `agent` CLI process.
+> **Note:** ~15–20s per turn is normal without the agent pool. Enable `CURSOR_PLAN2API_AGENT_POOL=1` to keep warm CLI slots and reduce cold-start latency.
+
+---
+
+## 📨 Claude Code / Anthropic Messages API
+
+> Use Claude Code or other Anthropic clients against your **Cursor subscription** via `POST /v1/messages`.
+
+```bash
+# Non-streaming
+curl -s http://127.0.0.1:8787/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"model":"composer-2.5","max_tokens":1024,"messages":[{"role":"user","content":"Hi"}]}'
+
+# Streaming (Anthropic SSE events)
+curl -sN http://127.0.0.1:8787/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"model":"composer-2.5","max_tokens":1024,"stream":true,"messages":[{"role":"user","content":"Hi"}]}'
+```
+
+| Feature | Support |
+|---------|---------|
+| `tool_use` / `tool_result` blocks | Mapped to OpenAI `tool_calls` internally |
+| Streaming | `message_start`, `content_block_delta`, `message_stop` |
+| Vision | Base64 `image` content blocks (same temp-file path as chat) |
+| Thinking models | `thinking` blocks when CLI emits thinking output |
+
+Point Claude Code at `http://127.0.0.1:8787` with any API key when `CURSOR_PLAN2API_API_KEY` is unset.
 
 ---
 
@@ -354,14 +381,30 @@ curl -s http://127.0.0.1:8787/v1/responses \
 
 Supports `stream: true` (SSE events: `response.created`, `response.output_text.delta`, `response.completed`).
 
+### `GET /v1/usage`
+
+Returns live Cursor subscription usage from `api2.cursor.sh`. Each model entry includes token counts, request counts, and `estimated_cost_usd` (approximate; Composer subscription models show `$0`).
+
+```bash
+curl http://127.0.0.1:8787/v1/usage | jq '.estimated_cost_usd_total, .models'
+```
+
+### Admin & request logs
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /admin` | HTML request log UI with live SSE tail |
+| `GET /admin/logs` | JSON log (`?limit=100`, default 100) |
+| `GET /admin/logs/stream` | SSE stream of new requests |
+
+Open `http://127.0.0.1:8787/admin` in a browser. When `CURSOR_PLAN2API_API_KEY` is set, pass `Authorization: Bearer <key>` on API requests; the admin page uses the same origin.
+
+Enable request capture with `CURSOR_PLAN2API_VERBOSE=true` (or `verbose: true` in config).
+
 ### Other endpoints
 
-- `GET /v1/usage` — subscription usage with per-model `estimated_cost_usd`
-- `GET /admin` — HTML request log UI (requires API key when configured)
-- `GET /admin/logs` — JSON request log (`?limit=100`)
-- `GET /admin/logs/stream` — SSE live log tail
-- `POST /v1/embeddings` — semantic embeddings
-- `POST /v1/images/generations` — image generation
+- `POST /v1/embeddings` — semantic embeddings (`semantic` or `local` provider)
+- `POST /v1/images/generations` — image generation via Cursor `generateImageToolCall`
 
 ### Chat completions extras
 
@@ -394,40 +437,106 @@ Supports `stream: true` (SSE events: `response.created`, `response.output_text.d
 
 ---
 
-## ⚙️ Environment Variables
+## ⚙️ Configuration
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `CURSOR_PLAN2API_PORT` | `8787` | Port |
-| `CURSOR_PLAN2API_DEFAULT_MODEL` | `composer-2.5` | Default model |
-| `CURSOR_PLAN2API_MODE` | `ask` | Default CLI mode |
-| `CURSOR_PLAN2API_CLIENT_COMPAT` | `openrouter` | `openrouter` or `delegate` |
-| `CURSOR_PLAN2API_SESSION_RESUME` | `true` | Cursor CLI `--resume` |
-| `CURSOR_PLAN2API_WARMUP_ON_START` | `true` | Warm agent binary on start |
-| `CURSOR_PLAN2API_AGENT_POOL` | `false` | Keep warm CLI slots between requests |
-| `CURSOR_PLAN2API_AGENT_POOL_SIZE` | `2` | Number of warm slots when pool enabled |
-| `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG` | `true` | Merge built-in model catalog into `/v1/models` |
-| `CURSOR_PLAN2API_EXTRA_MODELS` | — | Additional models (`id` or `id=Name`, comma-separated) |
-| `CURSOR_PLAN2API_API_KEY` | — | Optional bearer token |
-| `CURSOR_PLAN2API_VERBOSE` | `false` | Request logging |
-| `CURSOR_PLAN2API_MAX_HISTORY_TOKENS` | `80000` | Context compression budget |
-| `CURSOR_PLAN2API_AUTO_CONTINUE_MAX` | `3` | Auto-continue on truncation |
+Configuration merges three layers: **defaults** → **config.yaml** → **environment variables** (env wins on conflict).
 
 ### Config file (`config.yaml`)
 
-Optional YAML config is loaded from `~/.cursor-plan2api/config.yaml` or `./config.yaml`. Environment variables override yaml values.
+Copy [`examples/config.yaml`](examples/config.yaml) to `~/.cursor-plan2api/config.yaml` or `./config.yaml`:
 
 ```yaml
 host: 127.0.0.1
 port: 8787
 default_model: composer-2.5
+mode: ask
+client_compat: openrouter
+
+# Context & continuation
 max_history_tokens: 80000
 auto_continue_max: 3
+
+# Session resume
+session_resume: true
+session_resume_min_chars: 12000
+
+# Model catalog
+include_model_catalog: true
+# extra_models:
+#   - id: custom-model
+#     name: Custom Model
+
+# Performance
+agent_pool: false
+agent_pool_size: 2
+warmup_on_start: true
+
+# Optional local API key
+# api_key: your-secret-key
+verbose: false
 ```
 
-See [`examples/config.yaml`](examples/config.yaml).
+### Environment variables
 
-See full list in source [`src/config.ts`](src/config.ts).
+#### Core
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURSOR_PLAN2API_HOST` | `127.0.0.1` | Bind address |
+| `CURSOR_PLAN2API_PORT` | `8787` | Port |
+| `CURSOR_PLAN2API_DEFAULT_MODEL` | `composer-2.5` | Default model |
+| `CURSOR_PLAN2API_MODE` | `ask` | Default CLI mode (`ask` \| `plan` \| `agent`) |
+| `CURSOR_PLAN2API_CLIENT_COMPAT` | `openrouter` | `openrouter` (Hermes tool loop) or `delegate` (Cursor executes) |
+| `CURSOR_PLAN2API_API_KEY` | — | Optional bearer token for all endpoints |
+| `CURSOR_PLAN2API_VERBOSE` | `false` | Log requests to admin UI ring buffer |
+
+#### Session & context
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURSOR_PLAN2API_SESSION_RESUME` | `true` | Cursor CLI `--resume` for long conversations |
+| `CURSOR_PLAN2API_SESSION_RESUME_MIN_CHARS` | `12000` | Min prompt size before resume kicks in |
+| `CURSOR_PLAN2API_SESSION_TTL_MS` | `3600000` | Session store TTL (1 hour) |
+| `CURSOR_PLAN2API_MAX_HISTORY_TOKENS` | `80000` | Context compression budget (head+tail truncation) |
+| `CURSOR_PLAN2API_AUTO_CONTINUE_MAX` | `3` | Auto-continue retries on truncated output |
+
+#### Model catalog
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURSOR_PLAN2API_INCLUDE_MODEL_CATALOG` | `true` | Merge built-in ~189 model catalog into `/v1/models` |
+| `CURSOR_PLAN2API_EXTRA_MODELS` | — | Additional models (`id` or `id=Name`, comma-separated) |
+
+#### Performance & CLI
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURSOR_PLAN2API_AGENT_POOL` | `false` | Keep warm CLI slots between requests |
+| `CURSOR_PLAN2API_AGENT_POOL_SIZE` | `2` | Number of warm slots when pool enabled |
+| `CURSOR_PLAN2API_WARMUP_ON_START` | `true` | Warm agent binary on start |
+| `CURSOR_PLAN2API_MAX_CONCURRENT` | `4` | Max parallel CLI requests |
+| `CURSOR_PLAN2API_TIMEOUT_MS` | `300000` | Per-request CLI timeout (5 min) |
+| `CURSOR_PLAN2API_RATE_LIMIT_RETRIES` | `3` | Retries on HTTP 429 from Cursor |
+| `CURSOR_PLAN2API_RATE_LIMIT_DELAY_MS` | `2000` | Delay between 429 retries |
+| `CURSOR_PLAN2API_PLAN_FAST` | `true` | Plan mode fast-path (~2× faster) |
+
+#### Embeddings & images
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURSOR_PLAN2API_EMBEDDING_PROVIDER` | `semantic` | `semantic` (Xenova) or `local` (hash-based) |
+| `CURSOR_PLAN2API_EMBEDDING_MODEL` | `Xenova/all-MiniLM-L6-v2` | Semantic embedding model |
+| `CURSOR_PLAN2API_EMBEDDING_DIMS` | `384` | Embedding vector dimensions |
+| `CURSOR_PLAN2API_IMAGE_MODEL` | `composer-2.5` | Default model for image generation |
+
+#### Other
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURSOR_PLAN2API_CORS` | `true` | Enable CORS headers |
+| `CURSOR_PLAN2API_HEALTH_PUBLIC` | `false` | Expose detailed health without API key |
+
+Full schema: [`src/config.ts`](src/config.ts).
 
 ---
 
@@ -537,15 +646,33 @@ npm run test:models -- --models=composer-2.5,auto --modes=ask
 
 ```text
 Cursor-Plan2API/
+├── Dockerfile / docker-compose.yml
+├── deploy/
+│   ├── systemd/cursor-plan2api.service
+│   └── launchd/com.cursor.plan2api.plist
+├── examples/
+│   ├── config.yaml                 # Full config reference
+│   └── hermes-config.yaml
 ├── opencode.jsonc                  # OpenCode provider (3 recommended models)
-├── examples/hermes-config.yaml
 ├── scripts/model-matrix-test.mjs   # Full model catalog test suite
 ├── src/
-│   ├── models.ts                   # Recommended model IDs + sorting
-│   ├── cursor/catalog.ts           # Built-in ~189 model ids
-│   ├── cursor/models.ts            # Catalog merge + EXTRA_MODELS parser
-│   ├── openai/hermes-mode.ts       # Hermes Agent / OpenCode client logic
-│   └── cursor/session-store.ts
+│   ├── config.ts                   # Zod config schema (yaml + env)
+│   ├── handlers/
+│   │   ├── chat-completions.ts     # POST /v1/chat/completions
+│   │   ├── messages.ts             # POST /v1/messages (Anthropic)
+│   │   ├── responses.ts            # POST /v1/responses
+│   │   ├── admin.ts                # GET /admin, /admin/logs
+│   │   └── usage.ts                # GET /v1/usage + cost estimates
+│   ├── anthropic/convert.ts        # Anthropic ↔ OpenAI message mapping
+│   ├── cursor/
+│   │   ├── catalog.ts              # Built-in ~189 model ids
+│   │   ├── agent-pool.ts           # Warm CLI slot pool
+│   │   └── pricing.ts              # Per-model cost estimation
+│   └── openai/
+│       ├── context-budget.ts       # MAX_HISTORY_TOKENS compression
+│       ├── auto-continue.ts        # Truncation auto-continue
+│       ├── tool-fixer.ts           # Tool parameter normalization
+│       └── hermes-mode.ts          # Hermes Agent / OpenCode client logic
 └── dist/
 ```
 
