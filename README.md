@@ -25,7 +25,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![OpenAI API](https://img.shields.io/badge/OpenAI%20API-compatible-412991)]()
 [![Hermes Agent](https://img.shields.io/badge/Hermes%20Agent-compatible-7C3AED)]()
-[![OpenCode](https://img.shields.io/badge/OpenCode-compatible-0EA5E9)]()
+[![Model Matrix](https://img.shields.io/badge/model%20matrix-179%2F179%20passed-brightgreen)]()
 
 ---
 
@@ -83,7 +83,10 @@ cursor-plan2api/auto
 | 🌐 **CORS** | Browser clients supported |
 | 🖥️ **Daemon** | `start` / `stop` / `status` in the background |
 | 📨 **Anthropic Messages** | `POST /v1/messages` for Claude Code & Anthropic clients |
-| 🗜️ **Context compression** | `MAX_HISTORY_TOKENS` budget with head+tail tool truncation |
+| 🗜️ **Context compression** | `MAX_HISTORY_TOKENS` + `minimal` / `default` / `aggressive` levels |
+| 💾 **Session persistence** | SQLite at `~/.cursor-plan2api/sessions.db` survives restarts |
+| 🔑 **Dashboard API key bridge** | Optional `CURSOR_API_KEY` for usage API on non-macOS |
+| 🌐 **Outbound HTTP proxy** | `HTTP_PROXY` / `HTTPS_PROXY` for usage API and vision downloads |
 | 🔧 **Tool parameter fixer** | `file_path→path`, smart quotes, tolerant JSON parse |
 | 🔁 **Auto-continue** | Resume truncated outputs (`AUTO_CONTINUE_MAX`) |
 | 📋 **JSON mode** | `response_format: { type: "json_object" }` |
@@ -121,6 +124,17 @@ agent status
 npm install -g cursor-plan2api
 cursor-plan2api
 ```
+
+**Publishing** (maintainers):
+
+```bash
+npm run build
+npm publish --dry-run   # verify package contents
+npm login               # one-time npm auth
+npm publish --access public
+```
+
+The package ships `dist/`, `docs/openapi.yaml`, `examples/`, and `README.md` only (`files` whitelist in `package.json`). `prepublishOnly` runs `npm run build` automatically.
 
 Or run without global install:
 
@@ -259,6 +273,7 @@ curl -sN http://127.0.0.1:8787/v1/messages \
 | Streaming | `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`, `message_stop` |
 | Vision | Base64 `image` content blocks (same temp-file path as chat) |
 | Thinking models | `thinking` blocks when CLI emits thinking output |
+| `thinking` budget param | `{"type":"enabled","budget_tokens":10000}` on `POST /v1/messages` |
 
 Point Claude Code at `http://127.0.0.1:8787` with any API key when `CURSOR_PLAN2API_API_KEY` is unset.
 
@@ -428,6 +443,7 @@ Open `http://127.0.0.1:8787/playground` after starting the gateway. Pick a model
 The Cursor CLI does not accept raw base64 image bytes on the command line. Cursor-Plan2API decodes `image_url` / Anthropic `image` blocks to **temp files** and injects file paths into the prompt (up to **1 MB** per image, PNG/JPEG/GIF/WebP/BMP/HEIC).
 
 - Multiple images per message are supported (unique temp filenames).
+- `https://` image URLs are downloaded (max 1 MB, 15s timeout, MIME validated).
 - Vision prompt injection tells the model to read paths directly.
 - Temp dirs are removed after each request via `cleanup()`.
 
@@ -562,11 +578,15 @@ verbose: false
 | `CURSOR_PLAN2API_SESSION_RESUME` | `true` | Cursor CLI `--resume` for long conversations |
 | `CURSOR_PLAN2API_SESSION_RESUME_MIN_CHARS` | `12000` | Min prompt size before resume kicks in |
 | `CURSOR_PLAN2API_SESSION_TTL_MS` | `3600000` | Session store TTL (1 hour) |
+| `CURSOR_PLAN2API_SESSION_DB_PATH` | `~/.cursor-plan2api/sessions.db` | Persistent session database path |
 | `CURSOR_PLAN2API_MAX_HISTORY_TOKENS` | `80000` | Context compression budget (head+tail truncation) |
+| `CURSOR_PLAN2API_COMPRESSION_LEVEL` | `default` | `minimal`, `default`, or `aggressive` |
 | `CURSOR_PLAN2API_AUTO_CONTINUE_MAX` | `3` | Auto-continue retries on truncated output |
 | `CURSOR_PLAN2API_COMPACT_TOOLS` | `false` | Compact tool schemas in prompts |
 | `CURSOR_PLAN2API_PROFILE_ROTATION` | `none` | `round-robin`, `lru`, or `none` |
 | `CURSOR_PLAN2API_PROFILES` | — | JSON array or `name:bin:workspace` tuples |
+| `CURSOR_PLAN2API_CURSOR_API_KEY` | — | Dashboard API key (or set `CURSOR_API_KEY`) |
+| `HTTP_PROXY` / `HTTPS_PROXY` | — | Outbound proxy for usage API and vision URL downloads |
 
 #### Model catalog
 
@@ -674,7 +694,11 @@ tail -f ~/.cursor-plan2api/server.log
 
 ## 🧪 Tests & CI
 
-GitHub Actions runs on every push to `main` / `cursor/**` branches: `npm ci` → `npm run build` → `npm run test:unit` → OpenAPI YAML validation. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+GitHub Actions runs on every push to `main` / `cursor/**` branches: `npm ci` → `npm run build` → `npm run test:unit` → catalog sync check → OpenAPI YAML validation. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+```bash
+npm run test:catalog      # compare agent --list-models vs catalog.ts
+```
 
 ```bash
 npm run test              # full integration suite (requires running gateway)

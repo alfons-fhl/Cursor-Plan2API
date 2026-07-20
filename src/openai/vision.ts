@@ -2,10 +2,15 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
+import type { ResolvedProxyConfig } from "../http-client.js"
+import { proxiedFetch } from "../http-client.js"
 import type { OpenAiContentPart } from "./types.js"
 
 /** Maximum decoded image size (1 MB), aligned with composer-api. */
 export const MAX_IMAGE_BYTES = 1_048_576
+
+/** Default timeout for remote image downloads. */
+export const IMAGE_DOWNLOAD_TIMEOUT_MS = 15_000
 
 const MIME_TO_EXT: Record<string, string> = {
   "image/png": "png",
@@ -18,6 +23,8 @@ const MIME_TO_EXT: Record<string, string> = {
   "image/heif": "heif",
   "image/tiff": "tiff",
 }
+
+const ALLOWED_IMAGE_MIMES = new Set(Object.keys(MIME_TO_EXT))
 
 /** Prompt prefix injected when images are attached for CLI vision tasks. */
 export const VISION_PROMPT_PREFIX = [
@@ -56,6 +63,12 @@ export const parseDataUrl = (
   }
 }
 
+/**
+ * Validate that a MIME type is an allowed image format.
+ */
+export const isAllowedImageMime = (mime: string): boolean =>
+  ALLOWED_IMAGE_MIMES.has(mime.toLowerCase())
+
 const extensionForMime = (mime: string): string =>
   MIME_TO_EXT[mime.toLowerCase()] ?? "png"
 
@@ -77,12 +90,57 @@ export const createImageAttachmentContext =
   }
 
 /**
+ * Download an HTTPS image URL with size, timeout, and MIME validation.
+ */
+export const downloadImageUrl = async (
+  url: string,
+  proxy: ResolvedProxyConfig = {},
+): Promise<{ mime: string; data: Buffer }> => {
+  if (!url.startsWith("https://")) {
+    throw new Error("Only https:// image URLs are supported")
+  }
+
+  const response = await proxiedFetch(
+    url,
+    {
+      method: "GET",
+      headers: { Accept: "image/*" },
+      timeoutMs: IMAGE_DOWNLOAD_TIMEOUT_MS,
+      redirect: "follow",
+    },
+    proxy,
+  )
+
+  if (!response.ok) {
+    throw new Error(`Image download failed with status ${response.status}`)
+  }
+
+  const contentType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase()
+  if (!contentType || !isAllowedImageMime(contentType)) {
+    throw new Error(`Unsupported image content-type: ${contentType ?? "unknown"}`)
+  }
+
+  const data = Buffer.from(await response.arrayBuffer())
+  if (data.length === 0) {
+    throw new Error("Downloaded image is empty")
+  }
+  if (data.length > MAX_IMAGE_BYTES) {
+    throw new Error(
+      `Downloaded image exceeds ${MAX_IMAGE_BYTES} byte limit (${data.length} bytes)`,
+    )
+  }
+
+  return { mime: contentType, data }
+}
+
+/**
  * Resolve an image_url part to a local file path when possible.
  */
 export const resolveImagePart = async (
   part: Extract<OpenAiContentPart, { type: "image_url" }>,
   index: number,
   context: ImageAttachmentContext,
+  proxy: ResolvedProxyConfig = {},
 ): Promise<ResolvedImage | null> => {
   const url =
     typeof part.image_url === "string"
@@ -99,8 +157,17 @@ export const resolveImagePart = async (
     }
   }
 
-  const parsed = parseDataUrl(url)
+  let parsed = parseDataUrl(url)
+
+  if (!parsed && url.startsWith("https://")) {
+    parsed = await downloadImageUrl(url, proxy)
+  }
+
   if (!parsed) return null
+
+  if (!isAllowedImageMime(parsed.mime)) {
+    throw new Error(`Unsupported image MIME type: ${parsed.mime}`)
+  }
 
   if (parsed.data.length > MAX_IMAGE_BYTES) {
     throw new Error(

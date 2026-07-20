@@ -40,6 +40,7 @@ import { readJsonBody, writeSse, endSse } from "./http.js"
 import { authorize, sendError } from "./shared.js"
 import { resolveEffectiveContext, resolveWorkspaceHeader } from "./request-context.js"
 import type { ProfileRotator } from "../cursor/profile-rotator.js"
+import { resolveProxyConfig } from "../http-client.js"
 import { sendJson } from "./http.js"
 
 type HandlerContext = {
@@ -149,14 +150,21 @@ export const handleResponses = async (
   }
 
   const fixedMessages = applyToolFixes(chatBody.messages)
-  const compressedMessages = compressMessages(fixedMessages, ctx.config.maxHistoryTokens)
+  const compressedMessages = compressMessages(
+    fixedMessages,
+    ctx.config.maxHistoryTokens,
+    ctx.config.compressionLevel,
+  )
   const messages = [...systemParts, ...compressedMessages]
   let promptCleanup: (() => Promise<void>) | undefined
   let fullPrompt = ""
   let prompt = ""
 
   try {
-    const built = await buildPromptFromMessages(messages)
+    const built = await buildPromptFromMessages(
+      messages,
+      resolveProxyConfig(ctx.config),
+    )
     fullPrompt = built.prompt
     promptCleanup = built.cleanup
 

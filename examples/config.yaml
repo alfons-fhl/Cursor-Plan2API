@@ -24,12 +24,21 @@ client_compat: openrouter
 
 # ── Context & continuation ──────────────────────────────────────────────────
 max_history_tokens: 80000    # Compress history above this token budget
+compression_level: default     # minimal | default | aggressive
 auto_continue_max: 3         # Retry truncated outputs up to N times
 
 # ── Session resume ────────────────────────────────────────────────────────────
 session_resume: true
 session_resume_min_chars: 12000
+# session_db_path: ~/.cursor-plan2api/sessions.db
 # session_ttl_ms: 3600000    # Session store TTL (default 1 hour)
+
+# Optional Dashboard API key (usage API on Linux/Windows; or set CURSOR_API_KEY env)
+# cursor_api_key: your-dashboard-key
+
+# Outbound proxy for usage API and https:// vision downloads
+# http_proxy: http://127.0.0.1:8080
+# https_proxy: http://127.0.0.1:8080
 
 # ── Model catalog ─────────────────────────────────────────────────────────────
 include_model_catalog: true  # Merge ~189 built-in model ids into GET /v1/models

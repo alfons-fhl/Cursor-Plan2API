@@ -1,3 +1,4 @@
+import type { ResolvedProxyConfig } from "../http-client.js"
 import type { OpenAiMessage } from "./types.js"
 import { maybeCompactTools } from "./compact-tools.js"
 import {
@@ -89,6 +90,7 @@ export const toolsToSystemText = (
  */
 export const buildPromptFromMessages = async (
   messages: OpenAiMessage[],
+  proxy: ResolvedProxyConfig = {},
 ): Promise<PromptBuildResult> => {
   const systemParts: string[] = []
   const conversation: string[] = []
@@ -99,7 +101,7 @@ export const buildPromptFromMessages = async (
     for (const message of messages) {
       const imageParts = extractImageParts(message.content)
       for (const part of imageParts) {
-        await resolveImagePart(part, imageCounter, imageContext)
+        await resolveImagePart(part, imageCounter, imageContext, proxy)
         imageCounter += 1
       }
 

@@ -1,6 +1,9 @@
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
-import * as https from "node:https"
+
+import type { ProxyConfig } from "../config.js"
+import { proxiedFetch, resolveProxyConfig } from "../http-client.js"
+import { resolveCursorAuth } from "./bridge-auth.js"
 
 const execFileAsync = promisify(execFile)
 
@@ -39,45 +42,41 @@ export const readKeychainToken = async (): Promise<string | null> => {
   }
 }
 
-const apiGet = (path: string, token: string): Promise<unknown> =>
-  new Promise((resolve, reject) => {
-    const req = https.request(
-      {
-        hostname: API_HOST,
-        path,
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-      },
-      (res) => {
-        let data = ""
-        res.on("data", (chunk) => {
-          data += chunk
-        })
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(data))
-          } catch {
-            resolve(null)
-          }
-        })
-      },
-    )
+/**
+ * Fetch JSON from Cursor's Dashboard API with optional proxy support.
+ */
+const apiGet = async (
+  path: string,
+  token: string,
+  config: Pick<ProxyConfig, "httpProxy" | "httpsProxy">,
+): Promise<unknown> => {
+  const url = `https://${API_HOST}${path}`
+  const response = await proxiedFetch(
+    url,
+    {
+      method: "GET",
+      headers: { Authorization: `Bearer ${token}` },
+      timeoutMs: 8_000,
+    },
+    resolveProxyConfig(config),
+  )
 
-    req.on("error", reject)
-    req.setTimeout(8_000, () => {
-      req.destroy(new Error("Cursor API timeout"))
-    })
-    req.end()
-  })
+  if (!response.ok) {
+    throw new Error(`Cursor API ${response.status}`)
+  }
+
+  return response.json()
+}
 
 /**
  * Fetch subscription usage from Cursor's billing API.
  */
 export const fetchAccountUsage = async (
   token: string,
+  config: Pick<ProxyConfig, "httpProxy" | "httpsProxy"> = {},
 ): Promise<CursorAccountUsage | null> => {
   try {
-    const raw = (await apiGet("/auth/usage", token)) as Record<
+    const raw = (await apiGet("/auth/usage", token, config)) as Record<
       string,
       unknown
     > | null
@@ -94,10 +93,12 @@ export const fetchAccountUsage = async (
 }
 
 /**
- * Fetch account usage using the local keychain token.
+ * Fetch account usage using CLI keychain or Dashboard API key.
  */
-export const fetchLocalAccountUsage = async (): Promise<CursorAccountUsage | null> => {
-  const token = await readKeychainToken()
-  if (!token) return null
-  return fetchAccountUsage(token)
+export const fetchLocalAccountUsage = async (
+  config: Pick<ProxyConfig, "cursorApiKey" | "httpProxy" | "httpsProxy"> = {},
+): Promise<CursorAccountUsage | null> => {
+  const auth = await resolveCursorAuth(config)
+  if (!auth.token) return null
+  return fetchAccountUsage(auth.token, config)
 }

@@ -36,5 +36,9 @@ jobs:
       - name: Unit tests
         run: npm run test:unit
 
+      - name: Catalog sync check
+        run: node scripts/sync-catalog-check.mjs
+        continue-on-error: false
+
       - name: Validate OpenAPI YAML
         run: node -e "const fs=require('fs'); const yaml=require('yaml'); yaml.parse(fs.readFileSync('docs/openapi.yaml','utf8')); console.log('openapi.yaml OK')"

@@ -46,6 +46,9 @@ import { authorize, authorizeHealth, sendError } from "./shared.js"
 import { sendJson } from "./http.js"
 import { resolveEffectiveContext, resolveWorkspaceHeader } from "./request-context.js"
 import type { ProfileRotator } from "../cursor/profile-rotator.js"
+import { resolveDashboardApiKey } from "../cursor/bridge-auth.js"
+import { resolveSessionDbPath } from "../cursor/session-persistence.js"
+import { resolveProxyConfig } from "../http-client.js"
 
 type HandlerContext = {
   config: ProxyConfig
@@ -72,7 +75,13 @@ export const handleHealth = (
   sendJson(res, 200, {
     status: "ok",
     provider: "Cursor-Plan2API",
-    auth: "cursor-cli-subscription",
+    auth: resolveDashboardApiKey(ctx.config)
+      ? "cli-subscription+dashboard-api-key"
+      : "cursor-cli-subscription",
+    auth_bridge: {
+      cli_subscription: true,
+      dashboard_api_key: Boolean(resolveDashboardApiKey(ctx.config)),
+    },
     cli_version: ctx.cliVersion ?? "unknown",
     default_model: ctx.config.defaultModel,
     extra_models: ctx.config.extraModels.length,
@@ -82,6 +91,11 @@ export const handleHealth = (
     hermes_agent_mode: ctx.config.clientCompat === "delegate",
     client_compat: ctx.config.clientCompat,
     session_resume: ctx.config.sessionResume,
+    session_persistence: resolveSessionDbPath(ctx.config.sessionDbPath),
+    compression_level: ctx.config.compressionLevel,
+    outbound_proxy: Boolean(
+      resolveProxyConfig(ctx.config).httpProxy || resolveProxyConfig(ctx.config).httpsProxy,
+    ),
     cached_sessions: ctx.sessionStore.size(),
     recommended_models: RECOMMENDED_MODELS.map((model) => model.id),
     embedding_provider: ctx.config.embeddingProvider,
@@ -99,6 +113,7 @@ export const handleHealth = (
       "POST /v1/embeddings",
       "POST /v1/images/generations",
       "GET /admin",
+      "GET /admin/stats",
       "GET /admin/logs",
       "GET /playground",
       "GET /openapi.json",
@@ -244,14 +259,21 @@ export const handleChatCompletions = async (
   }
 
   const fixedMessages = applyToolFixes(body.messages)
-  const compressedMessages = compressMessages(fixedMessages, ctx.config.maxHistoryTokens)
+  const compressedMessages = compressMessages(
+    fixedMessages,
+    ctx.config.maxHistoryTokens,
+    ctx.config.compressionLevel,
+  )
   const messages = [...systemParts, ...compressedMessages]
   let promptCleanup: (() => Promise<void>) | undefined
   let fullPrompt = ""
   let prompt = ""
 
   try {
-    const built = await buildPromptFromMessages(messages)
+    const built = await buildPromptFromMessages(
+      messages,
+      resolveProxyConfig(ctx.config),
+    )
     fullPrompt = built.prompt
     promptCleanup = built.cleanup
 

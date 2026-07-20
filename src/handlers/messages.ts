@@ -8,6 +8,7 @@ import { CursorAgentRunner } from "../cursor/runner.js"
 import { resolveRequestMode, resolveAgentWorkspace, resolveWorkspace } from "../cursor/workspace.js"
 import {
   anthropicToOpenAi,
+  isThinkingEnabled,
   openAiToAnthropic,
 } from "../anthropic/convert.js"
 import {
@@ -51,6 +52,7 @@ import { authorize, sendError } from "./shared.js"
 import { sendJson } from "./http.js"
 import { resolveEffectiveContext, resolveWorkspaceHeader } from "./request-context.js"
 import type { ProfileRotator } from "../cursor/profile-rotator.js"
+import { resolveProxyConfig } from "../http-client.js"
 
 type HandlerContext = {
   config: ProxyConfig
@@ -134,7 +136,11 @@ export const handleMessages = async (
   if (toolsText) systemParts.push({ role: "system", content: toolsText })
 
   const fixedMessages = applyToolFixes(body.messages)
-  const compressedMessages = compressMessages(fixedMessages, ctx.config.maxHistoryTokens)
+  const compressedMessages = compressMessages(
+    fixedMessages,
+    ctx.config.maxHistoryTokens,
+    ctx.config.compressionLevel,
+  )
   const messages = [...systemParts, ...compressedMessages]
 
   let promptCleanup: (() => Promise<void>) | undefined
@@ -142,7 +148,10 @@ export const handleMessages = async (
   let prompt = ""
 
   try {
-    const built = await buildPromptFromMessages(messages)
+    const built = await buildPromptFromMessages(
+      messages,
+      resolveProxyConfig(ctx.config),
+    )
     fullPrompt = built.prompt
     promptCleanup = built.cleanup
 
@@ -175,7 +184,8 @@ export const handleMessages = async (
             execution.cliMode === "ask" ? effectiveConfig.chatOnlyWorkspace : false,
           )
     const runner = new CursorAgentRunner(effectiveConfig)
-    const emitReasoning = shouldEmitReasoning(model)
+    const emitReasoning =
+      shouldEmitReasoning(model) || isThinkingEnabled(anthropicBody.thinking)
 
     const invocation = {
       model,
@@ -237,6 +247,7 @@ export const handleMessages = async (
         jsonText,
         finalized.toolCalls,
         usage,
+        result.reasoningText,
       )
 
       sendJson(res, 200, response)

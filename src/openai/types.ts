@@ -36,6 +36,10 @@ export type OpenAiChatRequest = {
   mode?: "ask" | "plan" | "agent"
   reasoning_effort?: string
   response_format?: OpenAiResponseFormat
+  thinking?: {
+    type: "enabled" | "disabled"
+    budget_tokens?: number
+  }
 }
 
 export type OpenAiChatResponse = {

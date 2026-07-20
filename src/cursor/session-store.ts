@@ -4,6 +4,10 @@ import type { IncomingMessage } from "node:http"
 
 import type { OpenAiChatRequest } from "../openai/types.js"
 import { messageContentToText } from "../openai/prompt.js"
+import {
+  openSessionPersistence,
+  type SessionPersistence,
+} from "./session-persistence.js"
 
 type SessionEntry = {
   cursorSessionId: string
@@ -11,12 +15,35 @@ type SessionEntry = {
 }
 
 /**
- * In-memory map from client conversation keys to Cursor CLI session ids.
+ * In-memory map from client conversation keys to Cursor CLI session ids,
+ * backed by SQLite (or JSON fallback) for restart survival.
  */
 export class CursorSessionStore {
   private readonly entries = new Map<string, SessionEntry>()
+  private readonly persistence: SessionPersistence
 
-  constructor(private readonly ttlMs: number) {}
+  constructor(
+    private readonly ttlMs: number,
+    sessionDbPath?: string,
+  ) {
+    this.persistence = openSessionPersistence(sessionDbPath)
+    this.loadFromDisk()
+  }
+
+  private loadFromDisk(): void {
+    for (const [key, entry] of this.persistence.entries()) {
+      this.entries.set(key, entry)
+    }
+    this.prune()
+  }
+
+  private persist(key: string, entry: SessionEntry): void {
+    this.persistence.set(key, entry.cursorSessionId)
+  }
+
+  private remove(key: string): void {
+    this.persistence.delete(key)
+  }
 
   /**
    * Resolve a stable conversation key for session reuse.
@@ -56,10 +83,12 @@ export class CursorSessionStore {
    */
   set(key: string, cursorSessionId: string): void {
     if (!cursorSessionId.trim()) return
-    this.entries.set(key, {
+    const entry: SessionEntry = {
       cursorSessionId: cursorSessionId.trim(),
       updatedAt: Date.now(),
-    })
+    }
+    this.entries.set(key, entry)
+    this.persist(key, entry)
   }
 
   /** Remove expired session mappings. */
@@ -68,6 +97,7 @@ export class CursorSessionStore {
     for (const [key, entry] of this.entries) {
       if (now - entry.updatedAt > this.ttlMs) {
         this.entries.delete(key)
+        this.remove(key)
       }
     }
   }
@@ -76,6 +106,11 @@ export class CursorSessionStore {
   size(): number {
     this.prune()
     return this.entries.size
+  }
+
+  /** Close the persistence backend. */
+  close(): void {
+    this.persistence.close()
   }
 }
 

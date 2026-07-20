@@ -217,7 +217,7 @@ async function runUnitTests() {
   record("applyToolFixes normalizes tool content", fixedMsgs[0]?.content === '"ok"', null)
 
   section("UNIT: openai/context-budget.ts")
-  const { compressMessages } = await import(join(ROOT, "dist/openai/context-budget.js"))
+  const { compressMessages, resolveHistoryTokenBudget } = await import(join(ROOT, "dist/openai/context-budget.js"))
 
   const longTool = "x".repeat(10_000)
   const compressed = compressMessages([
@@ -229,6 +229,38 @@ async function runUnitTests() {
   record("compressMessages keeps recent turns", compressed.some((m) => m.role === "user" && m.content === "more"), null)
   const toolMsg = compressed.find((m) => m.role === "tool")
   record("compressMessages truncates tool result", typeof toolMsg?.content === "string" && toolMsg.content.includes("truncated"), null)
+  record("resolveHistoryTokenBudget aggressive < default", resolveHistoryTokenBudget(10_000, "aggressive") < resolveHistoryTokenBudget(10_000, "default"), null)
+  record("resolveHistoryTokenBudget minimal > default", resolveHistoryTokenBudget(10_000, "minimal") > resolveHistoryTokenBudget(10_000, "default"), null)
+
+  section("UNIT: cursor/session-store.ts + persistence")
+  const { CursorSessionStore } = await import(join(ROOT, "dist/cursor/session-store.js"))
+  const { openSessionPersistence } = await import(join(ROOT, "dist/cursor/session-persistence.js"))
+  const testStore = new CursorSessionStore(60_000, join(ROOT, ".test-sessions.db"))
+  testStore.set("test-key", "sess-abc")
+  record("session store set/get", testStore.get("test-key") === "sess-abc", null)
+  const persistence = openSessionPersistence(join(ROOT, ".test-sessions.db"))
+  const persisted = persistence.get("test-key")
+  record("session persistence round-trip", persisted?.cursorSessionId === "sess-abc", null)
+  persistence.close()
+  testStore.close()
+
+  section("UNIT: cursor/bridge-auth.ts")
+  const { resolveDashboardApiKey, formatAuthLabel } = await import(join(ROOT, "dist/cursor/bridge-auth.js"))
+  record("resolveDashboardApiKey from config", resolveDashboardApiKey({ cursorApiKey: "key-123" }) === "key-123", null)
+  record("formatAuthLabel dual auth", formatAuthLabel({ source: "cli-keychain", token: "t", cliSubscription: true, dashboardApiKey: true }).includes("dashboard"), null)
+
+  section("UNIT: http-client.ts")
+  const { resolveProxyConfig, selectProxyUrl } = await import(join(ROOT, "dist/http-client.js"))
+  const proxyCfg = resolveProxyConfig({ httpProxy: "http://proxy:8080", httpsProxy: undefined })
+  record("resolveProxyConfig http", proxyCfg.httpProxy === "http://proxy:8080", null)
+  record("selectProxyUrl https", selectProxyUrl("https://api.example.com", { httpsProxy: "http://proxy:8080" }) === "http://proxy:8080", null)
+
+  section("UNIT: anthropic thinking convert")
+  const { isThinkingEnabled, resolveThinkingBudget, openAiToAnthropic } = await import(join(ROOT, "dist/anthropic/convert.js"))
+  record("isThinkingEnabled true", isThinkingEnabled({ type: "enabled", budget_tokens: 8000 }), null)
+  record("resolveThinkingBudget default", resolveThinkingBudget({ type: "enabled" }) === 10_000, null)
+  const thinkingBack = openAiToAnthropic("req2", "composer-2.5", "Answer", undefined, { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 }, "thoughts")
+  record("openAiToAnthropic thinking block", thinkingBack.content[0]?.type === "thinking", null)
 
   section("UNIT: openai/json-mode.ts")
   const {
@@ -254,7 +286,7 @@ async function runUnitTests() {
   record("estimateModelCostUsd returns number", typeof estimateModelCostUsd("claude-sonnet-5-thinking-high", 1000) === "number", null)
 
   section("UNIT: anthropic/convert.ts")
-  const { anthropicToOpenAi, openAiToAnthropic } = await import(join(ROOT, "dist/anthropic/convert.js"))
+  const { anthropicToOpenAi } = await import(join(ROOT, "dist/anthropic/convert.js"))
   const ao = anthropicToOpenAi({
     model: "composer-2.5",
     messages: [{ role: "user", content: "Hi" }],
@@ -264,10 +296,12 @@ async function runUnitTests() {
   record("openAiToAnthropic text block", back.content[0]?.type === "text", null)
 
   section("UNIT: openai/vision.ts")
-  const { parseDataUrl, MAX_IMAGE_BYTES } = await import(join(ROOT, "dist/openai/vision.js"))
+  const { parseDataUrl, MAX_IMAGE_BYTES, isAllowedImageMime } = await import(join(ROOT, "dist/openai/vision.js"))
   const parsedDataUrl = parseDataUrl(tinyPng)
   record("parseDataUrl png", parsedDataUrl?.mime === "image/png" && parsedDataUrl.data.length > 0, null)
   record("MAX_IMAGE_BYTES is 1MB", MAX_IMAGE_BYTES === 1_048_576, null)
+  record("isAllowedImageMime png", isAllowedImageMime("image/png"), null)
+  record("isAllowedImageMime rejects text", !isAllowedImageMime("text/plain"), null)
 
   section("UNIT: anthropic/stream.ts")
   const {

@@ -4,4 +4,6 @@ dist/
 .DS_Store
 model-matrix-state.json
 test-report.json
+.test-sessions.db
+.test-sessions.json
 .serena/

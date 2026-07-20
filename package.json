@@ -1,9 +1,17 @@
 {
   "name": "cursor-plan2api",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Cursor-Plan2API — Hermes Agent & OpenCode compatible OpenAI API for your Cursor.ai subscription",
   "type": "module",
   "license": "MIT",
+  "main": "./dist/cli.js",
+  "types": "./dist/cli.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/cli.js",
+      "types": "./dist/cli.d.ts"
+    }
+  },
   "author": "alfons-fhl",
   "repository": {
     "type": "git",
@@ -43,6 +51,7 @@
     "test:unit": "node scripts/full-test.mjs --unit-only",
     "test:edge": "node scripts/edge-test.mjs",
     "test:models": "node scripts/model-matrix-test.mjs",
+    "test:catalog": "node scripts/sync-catalog-check.mjs",
     "test:all": "node scripts/full-test.mjs && node scripts/edge-test.mjs"
   },
   "engines": {

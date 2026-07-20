@@ -20,7 +20,7 @@ import { handleEmbeddings } from "./handlers/embeddings.js"
 import { sendJson } from "./handlers/http.js"
 import { handleImageGenerations } from "./handlers/images.js"
 import { handleMessages } from "./handlers/messages.js"
-import { handleAdmin, handleAdminLogs, handleAdminLogsStream } from "./handlers/admin.js"
+import { handleAdmin, handleAdminLogs, handleAdminLogsStream, handleAdminStats } from "./handlers/admin.js"
 import { handleDocsRedirect, handleOpenApiJson, handleOpenApiYaml } from "./handlers/docs.js"
 import { handlePlayground } from "./handlers/playground.js"
 import { handleResponses } from "./handlers/responses.js"
@@ -97,6 +97,11 @@ export const createProxyServer = (ctx: ServerContext): Server => {
 
       if (method === "GET" && pathname === "/admin") {
         handleAdmin(req, res, ctx)
+        return
+      }
+
+      if (method === "GET" && pathname === "/admin/stats") {
+        await handleAdminStats(req, res, ctx)
         return
       }
 
@@ -178,7 +183,10 @@ export const startServer = async (
   config: ProxyConfig,
   cliVersion?: string,
 ): Promise<Server> => {
-  const sessionStore = new CursorSessionStore(config.sessionTtlMs)
+  const sessionStore = new CursorSessionStore(
+    config.sessionTtlMs,
+    config.sessionDbPath,
+  )
   const agentPool = new AgentWarmPool(config)
   const profileRotator = new ProfileRotator(
     config.profiles,

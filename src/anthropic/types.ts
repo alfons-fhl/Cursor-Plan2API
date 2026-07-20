@@ -1,8 +1,14 @@
 export type AnthropicContentBlock =
   | { type: "text"; text: string }
+  | { type: "thinking"; thinking: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; tool_use_id: string; content: string | AnthropicContentBlock[] }
+
+export type AnthropicThinkingConfig = {
+  type: "enabled" | "disabled"
+  budget_tokens?: number
+}
 
 export type AnthropicMessage = {
   role: "user" | "assistant"
@@ -22,6 +28,7 @@ export type AnthropicMessagesRequest = {
   }>
   tool_choice?: { type: "auto" | "any" | "tool"; name?: string }
   temperature?: number
+  thinking?: AnthropicThinkingConfig
 }
 
 export type AnthropicMessageResponse = {

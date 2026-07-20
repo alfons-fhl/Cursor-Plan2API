@@ -23,7 +23,7 @@ export const handleUsage = async (
     return
   }
 
-  const usage = await fetchLocalAccountUsage()
+  const usage = await fetchLocalAccountUsage(ctx.config)
   if (!usage) {
     sendError(
       res,

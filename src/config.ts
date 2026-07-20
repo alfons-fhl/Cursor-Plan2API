@@ -51,6 +51,16 @@ const configSchema = z.object({
   extraModels: z.array(z.object({ id: z.string(), name: z.string() })).default([]),
   /** Max estimated tokens for conversation history before compression. */
   maxHistoryTokens: z.coerce.number().int().positive().default(80_000),
+  /** Context compression aggressiveness (minimal | default | aggressive). */
+  compressionLevel: z.enum(["minimal", "default", "aggressive"]).default("default"),
+  /** Outbound HTTP proxy URL (falls back to HTTP_PROXY env). */
+  httpProxy: z.string().optional(),
+  /** Outbound HTTPS proxy URL (falls back to HTTPS_PROXY env). */
+  httpsProxy: z.string().optional(),
+  /** Path to persistent session database (default ~/.cursor-plan2api/sessions.db). */
+  sessionDbPath: z.string().optional(),
+  /** Cursor Dashboard API key (falls back to CURSOR_API_KEY env). */
+  cursorApiKey: z.string().optional(),
   /** Max auto-continue attempts when output is truncated. */
   autoContinueMax: z.coerce.number().int().min(0).max(10).default(3),
   /** Truncate tool descriptions when injecting large tool arrays into prompts. */
@@ -105,6 +115,11 @@ const yamlKeyMap: Record<string, keyof z.input<typeof configSchema>> = {
   include_model_catalog: "includeModelCatalog",
   extra_models: "extraModels",
   max_history_tokens: "maxHistoryTokens",
+  compression_level: "compressionLevel",
+  http_proxy: "httpProxy",
+  https_proxy: "httpsProxy",
+  session_db_path: "sessionDbPath",
+  cursor_api_key: "cursorApiKey",
   auto_continue_max: "autoContinueMax",
   compact_tools: "compactTools",
   profile_rotation: "profileRotation",
@@ -211,6 +226,16 @@ const buildEnvConfig = (): Record<string, unknown> => ({
   includeModelCatalog: boolFromEnv(env("INCLUDE_MODEL_CATALOG"), true),
   extraModels: parseExtraModels(env("EXTRA_MODELS")),
   maxHistoryTokens: env("MAX_HISTORY_TOKENS"),
+  compressionLevel:
+    env("COMPRESSION_LEVEL") === "minimal"
+      ? "minimal"
+      : env("COMPRESSION_LEVEL") === "aggressive"
+        ? "aggressive"
+        : "default",
+  httpProxy: env("HTTP_PROXY") ?? process.env.HTTP_PROXY ?? process.env.http_proxy,
+  httpsProxy: env("HTTPS_PROXY") ?? process.env.HTTPS_PROXY ?? process.env.https_proxy,
+  sessionDbPath: env("SESSION_DB_PATH"),
+  cursorApiKey: env("CURSOR_API_KEY") ?? process.env.CURSOR_API_KEY,
   autoContinueMax: env("AUTO_CONTINUE_MAX"),
   compactTools: boolFromEnv(env("COMPACT_TOOLS"), false),
   profileRotation:
