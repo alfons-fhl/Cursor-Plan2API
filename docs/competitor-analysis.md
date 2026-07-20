@@ -15,7 +15,7 @@
 | **Deployment** | Local daemon, Docker, systemd, launchd | Docker/systemd everywhere |
 | **Protocol breadth** | Chat Completions + Responses + Anthropic Messages | Often similar; we now match or exceed |
 
-**Strategic thesis:** We win on *subscription-native, agent-client-first* workflows with the broadest ToS-safe feature set. Remaining gaps are mostly *latency* (CLI spawn overhead), *multi-account rotation*, and *packaging* (npm publish, CI).
+**Strategic thesis:** We win on *subscription-native, agent-client-first* workflows with the broadest ToS-safe feature set. **P0, P1, and P2 are complete** (commit `e55eca7`). Remaining gaps are mostly *latency* (CLI spawn overhead per request) and optional *P2+* niceties (outbound proxy, Anthropic thinking budget).
 
 ---
 
@@ -67,17 +67,21 @@
 | Model matrix tests | `scripts/model-matrix-test.mjs` (179/179) | Best-in-class verification |
 | 429 retry + concurrency | `src/concurrency.ts`, `src/cursor/cli.ts` | Partial parity |
 | Daemon CLI | `src/daemon.ts` start/stop/status | Partial parity |
+| OpenAPI 3.1 + docs | `docs/openapi.yaml`, `GET /openapi.json`, `/docs` | Parity with cursor2api |
+| Web playground | `GET /playground` — browser chat UI | Unique among CLI bridges |
+| Multi-profile rotation | `src/cursor/profile-rotator.ts` — round-robin / LRU | Parity with cookie-based multi-key proxies |
+| Compact tool schemas | `src/openai/compact-tools.ts` | Large Hermes/OpenCode tool arrays |
+| npm publish-ready | `package.json` v0.3.0, `prepublishOnly`, `files` whitelist | `npm install -g cursor-plan2api` |
+| GitHub Actions CI | `.github/workflows/ci.yml` — build, unit tests, OpenAPI validate | Automated quality gate |
 
 ### Known limitations
 
 | Gap | Current behavior |
 |-----|------------------|
 | ~10–20s per turn (without pool) | New `agent` process per request; pool reduces cold start |
-| Single account | One CLI login by default; optional multi-profile rotation |
 | Cost estimates approximate | Based on published pricing; Composer subscription shows $0 |
 | Fable models require data policy | Cursor app must accept data retention policy |
-| npm package prepared | `package.json` publish-ready; run `npm publish` with token |
-| GitHub Actions CI | `.github/workflows/ci.yml` — build + unit tests |
+| npm not yet published | Package is publish-ready; run `npm publish` with token when ready |
 
 ---
 
@@ -125,9 +129,9 @@ Legend: ✅ full · ⚠️ partial · ❌ none · ➖ N/A (different purpose) ·
 
 ---
 
-## Completed backlog (P0 + P1)
+## Completed backlog (P0 + P1 + P2)
 
-All items below shipped on branch `cursor/hermes-agent-delegation` (commits `448bdc8` P0, `19a154e` P1).
+All items below shipped on branch `cursor/hermes-agent-delegation` (commits `448bdc8` P0, `19a154e` P1, `e55eca7` P2).
 
 ### P0 — Competitive parity (DONE)
 
@@ -158,7 +162,7 @@ All items below shipped on branch `cursor/hermes-agent-delegation` (commits `448
 
 ## Completed backlog (P2 — parity packaging & UX)
 
-Shipped on branch `cursor/hermes-agent-delegation` (P2 parity commit).
+Shipped on branch `cursor/hermes-agent-delegation` (commit `e55eca7`).
 
 | ID | Feature | Implementation |
 |----|---------|----------------|
@@ -210,10 +214,18 @@ Also improved: Anthropic streaming (`src/anthropic/stream.ts`), vision temp-file
 
 ---
 
+## Current competitive position (post-P2)
+
+| vs. competitor | Our position |
+|----------------|--------------|
+| **cursor2api** (web API) | Match or exceed on protocol breadth (Chat + Responses + Anthropic Messages), admin UI, OpenAPI, playground. They still lead on web-only auth and some Anthropic params. We lead on ToS safety and agent-client depth. |
+| **composer-api** | Match on OpenCode; exceed on model catalog (~189), embeddings, images, Anthropic Messages, config.yaml. They lead on native macOS app and SDK session DB. |
+| **Cookie proxies** (wisdgod, zhx47) | Far ahead on stability, auth model, and feature set. They lead only on multi-key comma auth (we now have profile rotation). |
+
 ## Suggested next steps
 
 ```text
-Sprint 8 (P2+): Outbound HTTP proxy → Anthropic thinking budget → Cursor SDK bridge
+Sprint 8 (P2+): Outbound HTTP proxy → Anthropic thinking budget → Cursor SDK bridge → npm publish
 ```
 
 ---

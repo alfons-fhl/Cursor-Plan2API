@@ -1,6 +1,6 @@
 # 🚀 Cursor-Plan2API
 
-> **✅ Hermes Agent compatible** · **✅ OpenCode compatible** · **✅ OpenAI API compatible**
+> **✅ Hermes Agent compatible** · **✅ OpenCode compatible** · **✅ Claude Code compatible** · **✅ OpenAI API compatible**
 >
 > **Use your [Cursor.ai](https://cursor.com) subscription as an OpenAI-compatible API** — locally, on your machine.
 
@@ -10,7 +10,8 @@
 |--------|--------|--------------|
 | **Hermes Agent** | **✅ Supported** | OpenRouter-style tool loop — Hermes Agent runs tools locally |
 | **[OpenCode](https://opencode.ai)** | **✅ Supported** | Full agent mode — files & shell on your machine |
-| OpenAI SDK / LangChain / n8n | ✅ Supported | Standard `/v1/chat/completions` |
+| **Claude Code** | **✅ Supported** | Anthropic Messages API (`POST /v1/messages`) |
+| OpenAI SDK / LangChain / n8n | ✅ Supported | Standard `/v1/chat/completions` and `/v1/responses` |
 
 ```text
 ┌────────────┐    POST /v1/chat/completions    ┌──────────────────┐   agent CLI   ┌────────────┐
@@ -356,6 +357,28 @@ curl http://127.0.0.1:8787/v1/chat/completions \
 
 Base URL: `http://127.0.0.1:8787`
 
+### All endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health`, `/v1/health` | Health check, CLI version, recommended models |
+| `GET` | `/v1/models` | OpenAI-compatible model list (~189 ids + live CLI merge) |
+| `GET` | `/v1/usage` | Live subscription usage + per-model `estimated_cost_usd` |
+| `POST` | `/v1/chat/completions` | Chat completions (streaming & non-streaming, tools, vision) |
+| `POST` | `/v1/messages` | Anthropic Messages API (Claude Code) |
+| `POST` | `/v1/responses` | OpenAI Responses API |
+| `POST` | `/v1/embeddings` | Semantic embeddings (`semantic` or `local` provider) |
+| `POST` | `/v1/images/generations` | Image generation via Cursor `generateImageToolCall` |
+| `GET` | `/admin` | HTML request log UI with live SSE tail |
+| `GET` | `/admin/logs` | JSON request log (`?limit=100`) |
+| `GET` | `/admin/logs/stream` | SSE stream of new requests |
+| `GET` | `/playground` | Browser chat UI (model picker + stream toggle) |
+| `GET` | `/openapi.json` | OpenAPI 3.1 spec (JSON) |
+| `GET` | `/docs/openapi.yaml` | OpenAPI 3.1 spec (YAML) |
+| `GET` | `/docs` | Redirect to `/docs/openapi.yaml` |
+
+OpenAPI source: [`docs/openapi.yaml`](docs/openapi.yaml). Interactive playground: `http://127.0.0.1:8787/playground`.
+
 ### `GET /health`
 
 Returns status, CLI version, `recommended_models`, session settings.
@@ -398,7 +421,7 @@ Supports `stream: true` (Anthropic SSE: `message_start`, `content_block_delta`, 
 | `GET /docs` | Redirect to `/docs/openapi.yaml` |
 | `GET /playground` | Browser chat UI (model picker + stream toggle) |
 
-Source: [`docs/openapi.yaml`](docs/openapi.yaml). Open `http://127.0.0.1:8787/playground` after starting the gateway.
+Open `http://127.0.0.1:8787/playground` after starting the gateway. Pick a model, toggle streaming, and send messages without curl.
 
 ### Vision / multimodal notes
 
@@ -581,6 +604,16 @@ verbose: false
 | `CURSOR_PLAN2API_CORS` | `true` | Enable CORS headers |
 | `CURSOR_PLAN2API_HEALTH_PUBLIC` | `false` | Expose detailed health without API key |
 
+#### CLI internals
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CURSOR_PLAN2API_AGENT_BIN` | `agent` | Path to Cursor CLI binary |
+| `CURSOR_PLAN2API_CHAT_ONLY` | `true` | Restrict agent to chat workspace |
+| `CURSOR_PLAN2API_STDIN` | `true` | Send prompts via stdin (large prompts) |
+| `CURSOR_PLAN2API_TRUST` | `true` | Pass `--trust` to agent |
+| `CURSOR_PLAN2API_FORCE` | `true` | Pass `--force` to agent |
+
 Full schema: [`src/config.ts`](src/config.ts).
 
 ---
@@ -639,7 +672,9 @@ tail -f ~/.cursor-plan2api/server.log
 
 ---
 
-## 🧪 Tests
+## 🧪 Tests & CI
+
+GitHub Actions runs on every push to `main` / `cursor/**` branches: `npm ci` → `npm run build` → `npm run test:unit` → OpenAPI YAML validation. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ```bash
 npm run test              # full integration suite (requires running gateway)
@@ -696,6 +731,9 @@ Cursor-Plan2API/
 ├── deploy/
 │   ├── systemd/cursor-plan2api.service
 │   └── launchd/com.cursor.plan2api.plist
+├── docs/
+│   ├── openapi.yaml                # OpenAPI 3.1 spec (served at /docs)
+│   └── competitor-analysis.md      # Feature parity vs competitors
 ├── examples/
 │   ├── config.yaml                 # Full config reference
 │   └── hermes-config.yaml
@@ -708,17 +746,25 @@ Cursor-Plan2API/
 │   │   ├── messages.ts             # POST /v1/messages (Anthropic)
 │   │   ├── responses.ts            # POST /v1/responses
 │   │   ├── admin.ts                # GET /admin, /admin/logs
+│   │   ├── playground.ts           # GET /playground
+│   │   ├── docs.ts                 # GET /openapi.json, /docs
 │   │   └── usage.ts                # GET /v1/usage + cost estimates
-│   ├── anthropic/convert.ts        # Anthropic ↔ OpenAI message mapping
+│   ├── anthropic/
+│   │   ├── convert.ts              # Anthropic ↔ OpenAI message mapping
+│   │   └── stream.ts               # Anthropic SSE event stream
 │   ├── cursor/
 │   │   ├── catalog.ts              # Built-in ~189 model ids
 │   │   ├── agent-pool.ts           # Warm CLI slot pool
+│   │   ├── profile-rotator.ts      # Multi-profile round-robin / LRU
 │   │   └── pricing.ts              # Per-model cost estimation
 │   └── openai/
 │       ├── context-budget.ts       # MAX_HISTORY_TOKENS compression
 │       ├── auto-continue.ts        # Truncation auto-continue
+│       ├── compact-tools.ts        # Compact tool schema mode
 │       ├── tool-fixer.ts           # Tool parameter normalization
+│       ├── vision.ts               # Base64 images → temp files
 │       └── hermes-mode.ts          # Hermes Agent / OpenCode client logic
+├── .github/workflows/ci.yml          # Build + unit tests + OpenAPI validate
 └── dist/
 ```
 

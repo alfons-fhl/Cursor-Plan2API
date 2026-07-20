@@ -5,6 +5,7 @@
 # ── Server ──────────────────────────────────────────────────────────────────
 host: 127.0.0.1
 port: 8787
+# agent_bin: agent           # Path to Cursor CLI binary (default: agent in PATH)
 
 # ── Model & mode ────────────────────────────────────────────────────────────
 default_model: composer-2.5
@@ -14,6 +15,12 @@ mode: ask                    # ask | plan | agent
 #   openrouter — Hermes Agent tool loop (model returns tool_calls, client executes)
 #   delegate   — Cursor executes files/shell directly
 client_compat: openrouter
+
+# ── CLI behavior ──────────────────────────────────────────────────────────────
+# chat_only: true             # Restrict agent to chat workspace (default true)
+# stdin: true                 # Send large prompts via stdin (default true)
+# trust: true                  # Pass --trust to agent
+# force: true                  # Pass --force to agent
 
 # ── Context & continuation ──────────────────────────────────────────────────
 max_history_tokens: 80000    # Compress history above this token budget
