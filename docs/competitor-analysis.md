@@ -15,7 +15,7 @@
 | **Deployment** | Local daemon, Docker, systemd, launchd | Docker/systemd everywhere |
 | **Protocol breadth** | Chat Completions + Responses + Anthropic Messages | Often similar; we now match or exceed |
 
-**Strategic thesis:** We win on *subscription-native, agent-client-first* workflows with the broadest ToS-safe feature set. **P0, P1, and P2 are complete** (commit `e55eca7`). Remaining gaps are mostly *latency* (CLI spawn overhead per request) and optional *P2+* niceties (outbound proxy, Anthropic thinking budget).
+**Strategic thesis:** We win on *subscription-native, agent-client-first* workflows with the broadest ToS-safe feature set. **P0, P1, P2, and P2+ are complete** (commit `266b24f`). Remaining gaps are mostly *latency* (CLI spawn overhead per request).
 
 ---
 
@@ -179,11 +179,19 @@ Also improved: Anthropic streaming (`src/anthropic/stream.ts`), vision temp-file
 
 ## Remaining backlog (P2+)
 
-| ID | Feature | Source | Priority |
-|----|---------|--------|----------|
-| P2-3 | Outbound HTTP proxy | cursor2api | Low |
-| P2-7 | Anthropic `thinking` budget param | cursor2api | Low |
-| P2-9 | Cursor SDK bridge option | composer-api | Low — dual auth for Dashboard API key users |
+**Shipped** on branch `cursor/hermes-agent-delegation` (commit `266b24f`).
+
+| ID | Feature | Implementation |
+|----|---------|----------------|
+| P2-3 | Outbound HTTP proxy | `src/http-client.ts`, `HTTP_PROXY`/`HTTPS_PROXY` + config.yaml |
+| P2-7 | Anthropic `thinking` budget param | `src/anthropic/convert.ts`, `thinking` on `/v1/messages` |
+| P2-9 | Cursor SDK bridge option | `src/cursor/bridge-auth.ts` — CLI subscription + optional `CURSOR_API_KEY` for usage API |
+| — | Session persistence | `src/cursor/session-persistence.ts` — SQLite at `~/.cursor-plan2api/sessions.db` |
+| — | Context compression levels | `compression_level: minimal \| default \| aggressive` in config |
+| — | HTTPS vision URLs | `src/openai/vision.ts` — download with size/MIME limits |
+| — | Catalog sync CI | `scripts/sync-catalog-check.mjs` + GitHub Actions step |
+| — | Admin dashboard stats | `GET /admin/stats`, richer `/admin` HTML |
+| — | npm publish readiness | `package.json` v0.3.1, `npm publish --dry-run` verified |
 
 ---
 
