@@ -1,0 +1,20 @@
+[Unit]
+Description=Cursor-Plan2API — OpenAI-compatible gateway for Cursor subscription
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/cursor-plan2api
+ExecStart=/usr/bin/node /opt/cursor-plan2api/dist/cli.js run
+Restart=on-failure
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=CURSOR_PLAN2API_HOST=127.0.0.1
+Environment=CURSOR_PLAN2API_PORT=8787
+# Optional: load overrides from config file
+# EnvironmentFile=-/home/%i/.cursor-plan2api/env
+
+[Install]
+WantedBy=multi-user.target

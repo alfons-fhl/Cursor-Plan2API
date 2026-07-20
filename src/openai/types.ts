@@ -19,16 +19,23 @@ export type OpenAiToolCall = {
   }
 }
 
+export type OpenAiResponseFormat =
+  | { type: "text" }
+  | { type: "json_object" }
+  | { type: "json_schema"; json_schema: { name: string; schema?: Record<string, unknown>; strict?: boolean } }
+
 export type OpenAiChatRequest = {
   model?: string
   messages: OpenAiMessage[]
   stream?: boolean
+  stream_options?: { include_usage?: boolean }
   user?: string
   tools?: Array<{ type?: string; function?: Record<string, unknown> }>
   tool_choice?: unknown
   functions?: Array<Record<string, unknown>>
   mode?: "ask" | "plan" | "agent"
   reasoning_effort?: string
+  response_format?: OpenAiResponseFormat
 }
 
 export type OpenAiChatResponse = {
@@ -44,7 +51,7 @@ export type OpenAiChatResponse = {
       reasoning_content?: string | null
       tool_calls?: OpenAiToolCall[]
     }
-    finish_reason: "stop" | "tool_calls" | null
+    finish_reason: "stop" | "tool_calls" | "length" | null
   }>
   usage: {
     prompt_tokens: number
@@ -71,7 +78,7 @@ export type OpenAiChatChunk = {
         function?: { name?: string; arguments?: string }
       }>
     }
-    finish_reason: "stop" | "tool_calls" | null
+    finish_reason: "stop" | "tool_calls" | "length" | null
   }>
   usage?: {
     prompt_tokens: number

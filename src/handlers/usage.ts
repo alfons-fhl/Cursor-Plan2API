@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http"
 
 import type { ProxyConfig } from "../config.js"
 import { fetchLocalAccountUsage } from "../cursor/auth.js"
+import { estimateModelCostUsd } from "../cursor/pricing.js"
 import { sendJson } from "./http.js"
 import { authorize, sendError } from "./shared.js"
 
@@ -33,10 +34,29 @@ export const handleUsage = async (
     return
   }
 
+  let totalEstimatedCostUsd = 0
+  const modelsWithCost: Record<string, unknown> = {}
+
+  for (const [modelId, modelUsage] of Object.entries(usage.models)) {
+    const estimatedCostUsd = estimateModelCostUsd(
+      modelId,
+      modelUsage.numTokens,
+      modelUsage.numRequests,
+    )
+    totalEstimatedCostUsd += estimatedCostUsd
+    modelsWithCost[modelId] = {
+      ...modelUsage,
+      estimated_cost_usd: estimatedCostUsd,
+    }
+  }
+
   sendJson(res, 200, {
     object: "cursor.usage",
     provider: "Cursor-Plan2API",
     start_of_month: usage.startOfMonth,
-    models: usage.models,
+    models: modelsWithCost,
+    estimated_cost_usd_total: Math.round(totalEstimatedCostUsd * 1_000_000) / 1_000_000,
+    pricing_note:
+      "Cost estimates are approximate based on published model pricing; Composer models on subscription show $0.",
   })
 }

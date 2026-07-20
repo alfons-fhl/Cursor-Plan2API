@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.cursor.plan2api</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/node</string>
+    <string>/opt/cursor-plan2api/dist/cli.js</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/opt/cursor-plan2api</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/tmp/cursor-plan2api.stdout.log</string>
+  <key>StandardErrorPath</key>
+  <string>/tmp/cursor-plan2api.stderr.log</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>CURSOR_PLAN2API_HOST</key>
+    <string>127.0.0.1</string>
+    <key>CURSOR_PLAN2API_PORT</key>
+    <string>8787</string>
+  </dict>
+</dict>
+</plist>

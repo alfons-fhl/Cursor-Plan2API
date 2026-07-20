@@ -15,6 +15,13 @@ import {
   finalizeHermesDelegationOutput,
   finalizeOpenRouterOutput,
 } from "../openai/hermes-mode.js"
+import { runWithAutoContinue, isTruncatedOutput } from "../openai/auto-continue.js"
+import { compressMessages } from "../openai/context-budget.js"
+import {
+  buildJsonModeInstruction,
+  finalizeJsonModeOutput,
+  parseResponseFormat,
+} from "../openai/json-mode.js"
 import { toolsToOpenRouterSystemText } from "../openai/openrouter-compat.js"
 import {
   buildPromptFromMessages,
@@ -31,6 +38,7 @@ import {
 } from "../openai/response.js"
 import { shouldEmitReasoning } from "../openai/responses-map.js"
 import { buildUsage } from "../openai/tokens.js"
+import { applyToolFixes, fixToolCalls } from "../openai/tool-fixer.js"
 import type { OpenAiChatRequest, OpenAiToolCall } from "../openai/types.js"
 import { logRequest, logResponse } from "../request-log.js"
 import { readJsonBody, writeSse, endSse } from "./http.js"
@@ -80,9 +88,12 @@ export const handleHealth = (
       "GET /v1/models",
       "GET /v1/usage",
       "POST /v1/chat/completions",
+      "POST /v1/messages",
       "POST /v1/responses",
       "POST /v1/embeddings",
       "POST /v1/images/generations",
+      "GET /admin",
+      "GET /admin/logs",
     ],
     timestamp: new Date().toISOString(),
   })
@@ -201,6 +212,11 @@ export const handleChatCompletions = async (
     resolvePlan2ApiClient(req.headers),
   )
 
+  const responseFormat = parseResponseFormat(body)
+  const jsonInstruction = responseFormat
+    ? buildJsonModeInstruction(responseFormat)
+    : undefined
+
   const toolsText = execution.injectToolsAsPrompt
     ? toolsToOpenRouterSystemText(body.tools, body.functions)
     : undefined
@@ -211,11 +227,16 @@ export const handleChatCompletions = async (
   if (execution.planSystemPrompt) {
     systemParts.push({ role: "system", content: execution.planSystemPrompt })
   }
+  if (jsonInstruction) {
+    systemParts.push({ role: "system", content: jsonInstruction })
+  }
   if (toolsText) {
     systemParts.push({ role: "system", content: toolsText })
   }
 
-  const messages = [...systemParts, ...body.messages]
+  const fixedMessages = applyToolFixes(body.messages)
+  const compressedMessages = compressMessages(fixedMessages, ctx.config.maxHistoryTokens)
+  const messages = [...systemParts, ...compressedMessages]
   let promptCleanup: (() => Promise<void>) | undefined
   let fullPrompt = ""
   let prompt = ""
@@ -300,15 +321,18 @@ export const handleChatCompletions = async (
           execution.openRouterCompat,
           body,
           sessionKey,
+          responseFormat,
         )
         return
       }
 
-      const result = await runner.runSyncJson(invocation)
+      const result = await runWithAutoContinue(runner, invocation, ctx.config)
       if (ctx.config.sessionResume && result.sessionId) {
         ctx.sessionStore.set(sessionKey, result.sessionId)
       }
-      const rawToolCalls = result.toolCalls ?? parseToolCallsFromText(result.text)
+      const rawToolCalls = fixToolCalls(
+        result.toolCalls ?? parseToolCallsFromText(result.text),
+      )
       const finalized = execution.hermesDelegation
         ? finalizeHermesDelegationOutput(
             execution.hermesDelegation,
@@ -321,7 +345,13 @@ export const handleChatCompletions = async (
             body,
             rawToolCalls,
           )
-      const usage = buildUsage(result.usage, prompt, finalized.text)
+      const jsonText = finalizeJsonModeOutput(finalized.text, responseFormat)
+      const usage = buildUsage(result.usage, prompt, jsonText)
+      const finishReason = finalized.toolCalls?.length
+        ? "tool_calls"
+        : isTruncatedOutput(result)
+          ? "length"
+          : "stop"
 
       sendJson(
         res,
@@ -329,10 +359,11 @@ export const handleChatCompletions = async (
         createChatResponse(
           requestId,
           result.model || model,
-          finalized.text,
+          jsonText,
           finalized.toolCalls,
           usage,
           result.reasoningText,
+          finishReason,
         ),
       )
 
@@ -384,6 +415,7 @@ const handleStreamingResponse = async (
   openRouterCompat = false,
   requestBody?: OpenAiChatRequest,
   sessionKey?: string,
+  responseFormat?: ReturnType<typeof parseResponseFormat>,
 ): Promise<void> => {
   writeSse(res, {
     "X-Request-Id": requestId,
@@ -492,13 +524,14 @@ const handleStreamingResponse = async (
           finish()
           return
         }
-        const rawToolCalls =
+        const rawToolCalls = fixToolCalls(
           parseToolCallsFromText(fullText) ??
           (streamedToolCalls.size
             ? [...streamedToolCalls.entries()]
                 .sort(([a], [b]) => a - b)
                 .map(([, call]) => call)
-            : undefined)
+            : undefined),
+        )
         const finalized = hermesDelegation
           ? finalizeHermesDelegationOutput(hermesDelegation, fullText, rawToolCalls)
           : finalizeOpenRouterOutput(
@@ -507,6 +540,7 @@ const handleStreamingResponse = async (
               requestBody ?? { messages: [] },
               rawToolCalls,
             )
+        const jsonText = finalizeJsonModeOutput(finalized.text || fullText, responseFormat)
         if (openRouterCompat && finalized.toolCalls?.length) {
           for (const [index, toolCall] of finalized.toolCalls.entries()) {
             if (streamedToolCalls.has(index)) continue
@@ -521,16 +555,21 @@ const handleStreamingResponse = async (
               `data: ${JSON.stringify(createToolCallChunk(requestId, resolvedModel, index, toolCall, "arguments"))}\n\n`,
             )
           }
-        } else if (hermesDelegation && finalized.text !== fullText && finalized.text) {
-          emitTextDelta(finalized.text.slice(fullText.length))
-          fullText = finalized.text
-        } else if (!openRouterCompat && finalized.text && finalized.text !== fullText) {
-          emitTextDelta(finalized.text.slice(fullText.length))
-          fullText = finalized.text
+        } else if (hermesDelegation && jsonText !== fullText && jsonText) {
+          emitTextDelta(jsonText.slice(fullText.length))
+          fullText = jsonText
+        } else if (!openRouterCompat && jsonText && jsonText !== fullText) {
+          emitTextDelta(jsonText.slice(fullText.length))
+          fullText = jsonText
         }
 
-        const finishReason = finalized.toolCalls?.length ? "tool_calls" : "stop"
-        const usage = buildUsage(cliUsage, prompt, finalized.text || fullText)
+        const finishReason = finalized.toolCalls?.length
+          ? "tool_calls"
+          : isTruncatedOutput({ text: fullText, model: resolvedModel })
+            ? "length"
+            : "stop"
+        const usage = buildUsage(cliUsage, prompt, jsonText || fullText)
+        const includeUsage = requestBody?.stream_options?.include_usage === true
 
         if (ctx.config.sessionResume && cursorSessionId && sessionKey) {
           ctx.sessionStore.set(sessionKey, cursorSessionId)
@@ -539,7 +578,7 @@ const handleStreamingResponse = async (
         writeSse(
           res,
           {},
-          `data: ${JSON.stringify(createFinishChunk(requestId, resolvedModel, finishReason, usage))}\n\n`,
+          `data: ${JSON.stringify(createFinishChunk(requestId, resolvedModel, finishReason, includeUsage ? usage : undefined))}\n\n`,
         )
         closeStream()
 

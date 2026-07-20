@@ -168,87 +168,87 @@ Legend: ✅ full · ⚠️ partial · ❌ none · ➖ N/A (different purpose) ·
 
 ### P1 — High value differentiators
 
-#### P1-1: `POST /v1/messages` (Anthropic Messages API)
+#### P1-1: `POST /v1/messages` (Anthropic Messages API) — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | cursor2api (primary), api2cursor |
 | **Why it matters** | Claude Code is the largest agentic client; expects Anthropic protocol natively. |
-| **Implementation** | New `src/handlers/messages.ts` + `src/anthropic/` converter. Map tool_use/tool_result blocks ↔ our OpenAI types. Start with streaming + basic tools; reuse Hermes OpenRouter logic where possible. |
+| **Implementation** | `src/handlers/messages.ts` + `src/anthropic/convert.ts`. Maps tool_use/tool_result ↔ OpenAI types. Streaming + basic tools. |
 | **Do NOT copy** | Identity sanitization ("always present as Claude"), refusal bypass loops, billing header stripping. |
 
-#### P1-2: Context compression & history token budget
+#### P1-2: Context compression & history token budget — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | cursor2api (3 levels, tool-result truncation, adaptive budget) |
 | **Why it matters** | Multi-turn Hermes/OpenCode sessions hit context limits; full re-prompt every turn is expensive with CLI spawn. |
-| **Implementation** | `src/openai/context-budget.ts`: env `CURSOR_PLAN2API_MAX_HISTORY_TOKENS` (default 80k). Summarize old tool results (head+tail), collapse assistant tool_call rounds. Integrate with existing session resume. |
+| **Implementation** | `src/openai/context-budget.ts`: `CURSOR_PLAN2API_MAX_HISTORY_TOKENS` (default 80k). Head+tail tool truncation, drop old turns. |
 | **Do NOT copy** | "Context pressure inflation" (fake `input_tokens` to trick clients) — deceptive. |
 
-#### P1-3: Tool parameter fixer
+#### P1-3: Tool parameter fixer — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | cursor2api (`tool-fixer.ts`), api2cursor (`compat/tools.py`) |
 | **Why it matters** | Models emit `file_path` instead of `path`, smart quotes, malformed JSON — causes Hermes tool loop failures. |
-| **Implementation** | Port minimal rules to `src/openai/tool-fixer.ts`: `file_path→path`, curly quote normalization, JSON tolerant parse before emitting `tool_calls`. Unit tests like cursor2api's `unit-tool-fixer.mjs`. |
+| **Implementation** | `src/openai/tool-fixer.ts`: `file_path→path`, curly quote normalization, JSON tolerant parse. |
 
-#### P1-4: Truncation auto-continue
+#### P1-4: Truncation auto-continue — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | cursor2api, cursorweb2api |
 | **Why it matters** | Long code writes get `finish_reason: length`; agent clients expect seamless continuation. |
-| **Implementation** | Detect truncation in runner (`finish_reason` or incomplete JSON tool args). Auto-append "continue" user message, max N retries (`CURSOR_PLAN2API_MAX_CONTINUE=3`). Especially for delegate mode Write/Edit tools. |
+| **Implementation** | `src/openai/auto-continue.ts`. Detect truncation heuristics, append continue prompt, max N retries (`CURSOR_PLAN2API_AUTO_CONTINUE_MAX=3`). |
 
-#### P1-5: `response_format` (JSON mode)
+#### P1-5: `response_format` (JSON mode) — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | cursor2api |
 | **Why it matters** | Structured output for automation pipelines. |
-| **Implementation** | Accept `response_format: { type: "json_object" }` on chat request; inject system instruction; strip markdown fences from response in `finalizeOpenRouterOutput`. |
+| **Implementation** | `response_format: { type: "json_object" }` on chat request; system instruction; strip markdown fences. |
 
-#### P1-6: Streaming usage (`stream_options.include_usage`)
+#### P1-6: Streaming usage (`stream_options.include_usage`) — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | wisdgod, OpenAI spec |
 | **Why it matters** | Clients track costs per stream; we have real CLI usage in non-stream only. |
-| **Implementation** | Emit final SSE chunk with `usage` object when `stream_options.include_usage: true`. |
+| **Implementation** | Final SSE chunk with `usage` when `stream_options.include_usage: true`. |
 
-#### P1-7: Request log UI (lightweight)
+#### P1-7: Request log UI (lightweight) — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | cursor2api `/logs`, api2cursor `/admin` |
 | **Why it matters** | Debugging Hermes/OpenCode tool loops without tailing files. |
-| **Implementation** | `GET /admin` static page + SSE from ring buffer in `src/request-log.ts`. Reuse existing verbose logging; optional SQLite like cursor2api for persistence. Auth via `CURSOR_PLAN2API_API_KEY`. |
+| **Implementation** | `GET /admin` HTML + `GET /admin/logs` JSON + SSE tail. Ring buffer in `src/request-log.ts`. Auth via API key. |
 
-#### P1-8: Cost estimation in usage response
+#### P1-8: Cost estimation in usage response — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | composer-api |
 | **Why it matters** | Users want to know subscription burn rate per model. |
-| **Implementation** | Extend `GET /v1/usage` with per-model cost estimates from Cursor published pricing table in `src/cursor/pricing.ts`. |
+| **Implementation** | `GET /v1/usage` extended with per-model `estimated_cost_usd` from `src/cursor/pricing.ts`. |
 
-#### P1-9: systemd / launchd service templates
+#### P1-9: systemd / launchd service templates — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | cursor2api-go |
 | **Why it matters** | Always-on gateway for Hermes/OpenCode without manual daemon. |
-| **Implementation** | `deploy/cursor-plan2api.service` + `deploy/com.cursor.plan2api.plist` examples in docs. |
+| **Implementation** | `deploy/systemd/cursor-plan2api.service` + `deploy/launchd/com.cursor.plan2api.plist`. |
 
-#### P1-10: `config.yaml` alongside env vars
+#### P1-10: `config.yaml` alongside env vars — **DONE**
 
 | | |
 |---|---|
 | **Competitors** | cursor2api, wisdgod |
 | **Why it matters** | Easier onboarding than 20+ env vars; matches Hermes/OpenCode config style. |
-| **Implementation** | Optional `~/.cursor-plan2api/config.yaml` merged over env in `loadConfig()`. Zod schema already exists. |
+| **Implementation** | `~/.cursor-plan2api/config.yaml` merged over defaults; env wins on conflict. Zod schema in `src/config.ts`. |
 
 ---
 

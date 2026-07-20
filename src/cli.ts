@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { loadConfig } from "./config.js"
+import { loadConfig, resolveConfigPath } from "./config.js"
 import {
   daemonRestart,
   daemonStart,
@@ -51,15 +51,25 @@ Environment:
   CURSOR_PLAN2API_AGENT_POOL_SIZE=2
   CURSOR_PLAN2API_TIMEOUT_MS=300000
   CURSOR_PLAN2API_AGENT_BIN=agent
+  CURSOR_PLAN2API_MAX_HISTORY_TOKENS=80000
+  CURSOR_PLAN2API_AUTO_CONTINUE_MAX=3
+
+Config file (optional, env overrides yaml):
+  ~/.cursor-plan2api/config.yaml
+  ./config.yaml
+  See examples/config.yaml
 
 Endpoints:
   GET  /health
   GET  /v1/models
   GET  /v1/usage
   POST /v1/chat/completions
+  POST /v1/messages
   POST /v1/responses
   POST /v1/embeddings
   POST /v1/images/generations
+  GET  /admin
+  GET  /admin/logs
 
 Headers:
   X-Cursor-Mode: ask|plan|agent
@@ -108,6 +118,11 @@ const runForeground = async (): Promise<void> => {
   console.log(`  base url      ${baseUrl}/v1`)
   console.log(`  health        ${baseUrl}/health`)
   console.log(`  usage         ${baseUrl}/v1/usage`)
+  console.log(`  admin         ${baseUrl}/admin`)
+  const configPath = resolveConfigPath()
+  if (configPath) {
+    console.log(`  config file   ${configPath}`)
+  }
 
   const shutdown = (): void => {
     server.close(() => process.exit(0))

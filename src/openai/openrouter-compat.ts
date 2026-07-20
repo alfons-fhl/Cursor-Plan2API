@@ -1,6 +1,7 @@
 import type { ParsedToolCall } from "../cursor/types.js"
 import type { OpenAiChatRequest, OpenAiToolCall } from "./types.js"
 import { parseToolCallsFromText } from "./prompt.js"
+import { fixToolCalls } from "./tool-fixer.js"
 
 /** Cursor-native tool names that must never be forwarded to Hermes/OpenAI clients. */
 const CURSOR_NATIVE_TOOL_NAMES = new Set([
@@ -85,7 +86,7 @@ export const resolveOpenRouterToolCalls = (
   const allowed = collectAllowedToolNames(body)
   const parsed = parseToolCallsFromText(text)
   const merged = parsed ?? nativeToolCalls
-  const toolCalls = filterClientToolCalls(merged, allowed)
+  const toolCalls = fixToolCalls(filterClientToolCalls(merged, allowed))
 
   if (toolCalls?.length) {
     const stripped = stripToolCallJson(text)

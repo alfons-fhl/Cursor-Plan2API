@@ -99,7 +99,7 @@ export const createToolCallChunk = (
 export const createFinishChunk = (
   requestId: string,
   model: string,
-  finishReason: "stop" | "tool_calls",
+  finishReason: "stop" | "tool_calls" | "length",
   usage?: OpenAiUsage,
 ): OpenAiChatChunk => ({
   id: `chatcmpl-${requestId}`,
@@ -126,6 +126,7 @@ export const createChatResponse = (
   toolCalls?: OpenAiToolCall[],
   usage?: OpenAiUsage,
   reasoningContent?: string,
+  finishReason: "stop" | "tool_calls" | "length" = "stop",
 ): OpenAiChatResponse => ({
   id: `chatcmpl-${requestId}`,
   object: "chat.completion",
@@ -140,7 +141,7 @@ export const createChatResponse = (
         reasoning_content: reasoningContent ?? undefined,
         tool_calls: toolCalls,
       },
-      finish_reason: toolCalls?.length ? "tool_calls" : "stop",
+      finish_reason: toolCalls?.length ? "tool_calls" : finishReason,
     },
   ],
   usage: usage ?? {

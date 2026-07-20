@@ -18,6 +18,8 @@ import {
 import { handleEmbeddings } from "./handlers/embeddings.js"
 import { sendJson } from "./handlers/http.js"
 import { handleImageGenerations } from "./handlers/images.js"
+import { handleMessages } from "./handlers/messages.js"
+import { handleAdmin, handleAdminLogs, handleAdminLogsStream } from "./handlers/admin.js"
 import { handleResponses } from "./handlers/responses.js"
 import { sendError } from "./handlers/shared.js"
 import { handleUsage } from "./handlers/usage.js"
@@ -86,6 +88,26 @@ export const createProxyServer = (ctx: ServerContext): Server => {
 
       if (method === "GET" && pathname === "/v1/usage") {
         await handleUsage(req, res, ctx)
+        return
+      }
+
+      if (method === "GET" && pathname === "/admin") {
+        handleAdmin(req, res, ctx)
+        return
+      }
+
+      if (method === "GET" && pathname === "/admin/logs/stream") {
+        handleAdminLogsStream(req, res, ctx)
+        return
+      }
+
+      if (method === "GET" && pathname === "/admin/logs") {
+        handleAdminLogs(req, res, ctx)
+        return
+      }
+
+      if (method === "POST" && pathname === "/v1/messages") {
+        await handleMessages(req, res, ctx)
         return
       }
 

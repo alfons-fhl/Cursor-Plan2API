@@ -80,6 +80,16 @@ cursor-plan2api/auto
 | 🔄 **429 Retry** | Automatic retry on rate limits |
 | 🌐 **CORS** | Browser clients supported |
 | 🖥️ **Daemon** | `start` / `stop` / `status` in the background |
+| 📨 **Anthropic Messages** | `POST /v1/messages` for Claude Code & Anthropic clients |
+| 🗜️ **Context compression** | `MAX_HISTORY_TOKENS` budget with head+tail tool truncation |
+| 🔧 **Tool parameter fixer** | `file_path→path`, smart quotes, tolerant JSON parse |
+| 🔁 **Auto-continue** | Resume truncated outputs (`AUTO_CONTINUE_MAX`) |
+| 📋 **JSON mode** | `response_format: { type: "json_object" }` |
+| 📈 **Stream usage** | `stream_options.include_usage` in final SSE chunk |
+| 🛠️ **Admin log UI** | `GET /admin` + live SSE tail at `/admin/logs/stream` |
+| 💰 **Cost estimates** | Per-model `estimated_cost_usd` in `/v1/usage` |
+| 📄 **config.yaml** | Optional yaml config merged with env vars |
+| 🚀 **Service templates** | systemd + launchd deploy examples |
 
 ---
 
@@ -320,6 +330,18 @@ See [Model catalog & `/v1/models`](#-model-catalog--v1models) for merge rules, e
 | `mode` | string | `ask` \| `plan` \| `agent` |
 | `reasoning_effort` | string | Emit `reasoning_content` / thinking deltas when set |
 
+### `POST /v1/messages`
+
+Anthropic Messages API compatible endpoint for Claude Code and other Anthropic clients.
+
+```bash
+curl -s http://127.0.0.1:8787/v1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"model":"composer-2.5","max_tokens":1024,"messages":[{"role":"user","content":"Hi"}]}'
+```
+
+Supports `stream: true` (Anthropic SSE: `message_start`, `content_block_delta`, `message_stop`). Tool use blocks map to OpenAI `tool_calls` internally.
+
 ### `POST /v1/responses`
 
 OpenAI Responses API compatible endpoint. Maps `input` and `instructions` to the same Cursor CLI runner as chat completions.
@@ -334,9 +356,19 @@ Supports `stream: true` (SSE events: `response.created`, `response.output_text.d
 
 ### Other endpoints
 
-- `GET /v1/usage` — subscription usage
+- `GET /v1/usage` — subscription usage with per-model `estimated_cost_usd`
+- `GET /admin` — HTML request log UI (requires API key when configured)
+- `GET /admin/logs` — JSON request log (`?limit=100`)
+- `GET /admin/logs/stream` — SSE live log tail
 - `POST /v1/embeddings` — semantic embeddings
 - `POST /v1/images/generations` — image generation
+
+### Chat completions extras
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `response_format` | object | `{ "type": "json_object" }` or `json_schema` for structured output |
+| `stream_options` | object | `{ "include_usage": true }` adds `usage` to final SSE chunk |
 
 ---
 
@@ -378,8 +410,49 @@ Supports `stream: true` (SSE events: `response.created`, `response.output_text.d
 | `CURSOR_PLAN2API_EXTRA_MODELS` | — | Additional models (`id` or `id=Name`, comma-separated) |
 | `CURSOR_PLAN2API_API_KEY` | — | Optional bearer token |
 | `CURSOR_PLAN2API_VERBOSE` | `false` | Request logging |
+| `CURSOR_PLAN2API_MAX_HISTORY_TOKENS` | `80000` | Context compression budget |
+| `CURSOR_PLAN2API_AUTO_CONTINUE_MAX` | `3` | Auto-continue on truncation |
+
+### Config file (`config.yaml`)
+
+Optional YAML config is loaded from `~/.cursor-plan2api/config.yaml` or `./config.yaml`. Environment variables override yaml values.
+
+```yaml
+host: 127.0.0.1
+port: 8787
+default_model: composer-2.5
+max_history_tokens: 80000
+auto_continue_max: 3
+```
+
+See [`examples/config.yaml`](examples/config.yaml).
 
 See full list in source [`src/config.ts`](src/config.ts).
+
+---
+
+## 🚀 Always-on install (systemd / launchd)
+
+### Linux (systemd)
+
+```bash
+sudo cp -r . /opt/cursor-plan2api
+cd /opt/cursor-plan2api && npm install && npm run build
+sudo cp deploy/systemd/cursor-plan2api.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now cursor-plan2api@$(whoami)
+```
+
+### macOS (launchd)
+
+```bash
+sudo cp -r . /opt/cursor-plan2api
+cd /opt/cursor-plan2api && npm install && npm run build
+sudo cp deploy/launchd/com.cursor.plan2api.plist /Library/LaunchDaemons/
+sudo launchctl load /Library/LaunchDaemons/com.cursor.plan2api.plist
+```
+
+Adjust paths in the unit files if you install elsewhere.
 
 ---
 

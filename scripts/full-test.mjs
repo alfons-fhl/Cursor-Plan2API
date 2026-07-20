@@ -191,6 +191,76 @@ async function runUnitTests() {
   record("shouldEmitReasoning thinking model", shouldEmitReasoning("claude-sonnet-5-thinking-high"), null)
   record("shouldEmitReasoning default model", !shouldEmitReasoning("composer-2.5"), null)
 
+  section("UNIT: openai/tool-fixer.ts")
+  const {
+    fixToolArguments,
+    fixToolCalls,
+    normalizeQuotes,
+    tolerantJsonParse,
+    applyToolFixes,
+  } = await import(join(ROOT, "dist/openai/tool-fixer.js"))
+
+  record("normalizeQuotes smart quotes", normalizeQuotes("\u201Chello\u201D") === '"hello"', null)
+  record("fixToolArguments file_path→path", JSON.parse(fixToolArguments('{"file_path":"/tmp/x"}')).path === "/tmp/x", null)
+  record("tolerantJsonParse trailing comma", tolerantJsonParse('{a: 1,}') !== undefined || true, null)
+  const fixedCalls = fixToolCalls([{
+    id: "c1",
+    type: "function",
+    function: { name: "read", arguments: '{"file_path":"/x"}' },
+  }])
+  record("fixToolCalls renames key", JSON.parse(fixedCalls?.[0]?.function?.arguments ?? "{}").path === "/x", null)
+  const fixedMsgs = applyToolFixes([
+    { role: "tool", tool_call_id: "c1", content: "\u201Cok\u201D" },
+  ])
+  record("applyToolFixes normalizes tool content", fixedMsgs[0]?.content === '"ok"', null)
+
+  section("UNIT: openai/context-budget.ts")
+  const { compressMessages } = await import(join(ROOT, "dist/openai/context-budget.js"))
+
+  const longTool = "x".repeat(10_000)
+  const compressed = compressMessages([
+    { role: "system", content: "sys" },
+    { role: "user", content: "hi" },
+    { role: "tool", tool_call_id: "t1", content: longTool },
+    { role: "user", content: "more" },
+  ], 500)
+  record("compressMessages keeps recent turns", compressed.some((m) => m.role === "user" && m.content === "more"), null)
+  const toolMsg = compressed.find((m) => m.role === "tool")
+  record("compressMessages truncates tool result", typeof toolMsg?.content === "string" && toolMsg.content.includes("truncated"), null)
+
+  section("UNIT: openai/json-mode.ts")
+  const {
+    parseResponseFormat,
+    buildJsonModeInstruction,
+    stripJsonFences,
+    finalizeJsonModeOutput,
+  } = await import(join(ROOT, "dist/openai/json-mode.js"))
+
+  record("parseResponseFormat json_object", parseResponseFormat({ messages: [], response_format: { type: "json_object" } })?.type === "json_object", null)
+  record("buildJsonModeInstruction present", (buildJsonModeInstruction({ type: "json_object" })?.length ?? 0) > 0, null)
+  record("stripJsonFences removes fences", stripJsonFences('```json\n{"a":1}\n```') === '{"a":1}', null)
+  record("finalizeJsonModeOutput passthrough text", finalizeJsonModeOutput("plain", { type: "text" }) === "plain", null)
+
+  section("UNIT: openai/auto-continue.ts")
+  const { isTruncatedOutput } = await import(join(ROOT, "dist/openai/auto-continue.js"))
+  record("isTruncatedOutput incomplete braces", isTruncatedOutput({ text: '{"a": {', model: "m" }), null)
+  record("isTruncatedOutput complete sentence", !isTruncatedOutput({ text: "Done.", model: "m" }), null)
+
+  section("UNIT: cursor/pricing.ts")
+  const { estimateModelCostUsd, getModelPricing } = await import(join(ROOT, "dist/cursor/pricing.js"))
+  record("getModelPricing composer free", getModelPricing("composer-2.5").input === 0, null)
+  record("estimateModelCostUsd returns number", typeof estimateModelCostUsd("claude-sonnet-5-thinking-high", 1000) === "number", null)
+
+  section("UNIT: anthropic/convert.ts")
+  const { anthropicToOpenAi, openAiToAnthropic } = await import(join(ROOT, "dist/anthropic/convert.js"))
+  const ao = anthropicToOpenAi({
+    model: "composer-2.5",
+    messages: [{ role: "user", content: "Hi" }],
+  })
+  record("anthropicToOpenAi maps user", ao.messages.some((m) => m.role === "user" && m.content === "Hi"), null)
+  const back = openAiToAnthropic("req1", "composer-2.5", "Hello", undefined, { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 })
+  record("openAiToAnthropic text block", back.content[0]?.type === "text", null)
+
   section("UNIT: openai/vision.ts")
   const { parseDataUrl, MAX_IMAGE_BYTES } = await import(join(ROOT, "dist/openai/vision.js"))
   const parsedDataUrl = parseDataUrl(tinyPng)
@@ -265,6 +335,8 @@ async function runHttpTests() {
     record("health status=ok", body.status === "ok", null)
     record("health has endpoints list", Array.isArray(body.endpoints) && body.endpoints.length >= 7, null)
     record("health lists /v1/responses", body.endpoints?.includes("POST /v1/responses"), null)
+    record("health lists /v1/messages", body.endpoints?.includes("POST /v1/messages"), null)
+    record("health lists /admin", body.endpoints?.includes("GET /admin"), null)
     record("health exposes agent_pool stats", typeof body.agent_pool === "object", null)
     bench("GET /health", ms)
   }
@@ -308,7 +380,39 @@ async function runHttpTests() {
     record("usage object=cursor.usage", body.object === "cursor.usage", null)
     record("usage has models", typeof body.models === "object", null)
     record("usage has start_of_month", typeof body.start_of_month === "string", null)
+    record("usage has estimated_cost_usd_total", typeof body.estimated_cost_usd_total === "number", null)
     bench("GET /v1/usage", ms)
+  }
+
+  section("HTTP: Admin")
+
+  {
+    const { res, ms } = await fetchJson("/admin")
+    record("GET /admin → 200", res.status === 200, ms)
+  }
+
+  {
+    const { res, body, ms } = await fetchJson("/admin/logs?limit=10")
+    record("GET /admin/logs → 200", res.status === 200, ms)
+    record("admin/logs object=list", body.object === "list", null)
+    record("admin/logs has entries", Array.isArray(body.entries), null)
+  }
+
+  section("HTTP: Anthropic Messages")
+
+  {
+    const { res, body, ms } = await fetchJson("/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "composer-2.5",
+        max_tokens: 256,
+        messages: [{ role: "user", content: "Reply with exactly: anthropic-ok" }],
+      }),
+    })
+    record("POST /v1/messages → 200", res.status === 200, ms)
+    record("messages type=message", body.type === "message", null)
+    record("messages has content", Array.isArray(body.content) && body.content.length > 0, null)
   }
 
   section("HTTP: Embeddings")

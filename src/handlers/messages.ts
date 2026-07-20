@@ -1,19 +1,25 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
 
 import type { ProxyConfig } from "../config.js"
-import type { AgentWarmPool } from "../cursor/agent-pool.js"
 import type { RequestSemaphore } from "../concurrency.js"
+import type { AgentWarmPool } from "../cursor/agent-pool.js"
 import { CursorSessionStore, buildResumePrompt, canResumeSession } from "../cursor/session-store.js"
 import { CursorAgentRunner } from "../cursor/runner.js"
 import { resolveRequestMode, resolveAgentWorkspace, resolveWorkspace } from "../cursor/workspace.js"
+import {
+  anthropicToOpenAi,
+  createAnthropicStreamEvents,
+  openAiToAnthropic,
+} from "../anthropic/convert.js"
+import type { AnthropicMessagesRequest } from "../anthropic/types.js"
+import { runWithAutoContinue } from "../openai/auto-continue.js"
+import { compressMessages } from "../openai/context-budget.js"
 import {
   resolveHermesExecution,
   resolvePlan2ApiClient,
   finalizeHermesDelegationOutput,
   finalizeOpenRouterOutput,
 } from "../openai/hermes-mode.js"
-import { runWithAutoContinue, isTruncatedOutput } from "../openai/auto-continue.js"
-import { compressMessages } from "../openai/context-budget.js"
 import {
   buildJsonModeInstruction,
   finalizeJsonModeOutput,
@@ -25,12 +31,6 @@ import {
   normalizeModelId,
   parseToolCallsFromText,
 } from "../openai/prompt.js"
-import {
-  createResponsesResponse,
-  mapResponsesRequestToChat,
-  shouldEmitReasoning,
-} from "../openai/responses-map.js"
-import type { ResponsesRequest } from "../openai/responses-types.js"
 import { createRequestId } from "../openai/response.js"
 import { buildUsage } from "../openai/tokens.js"
 import { applyToolFixes, fixToolCalls } from "../openai/tool-fixer.js"
@@ -54,9 +54,9 @@ const resolveModel = (
 ): string => normalizeModelId(requested) ?? config.defaultModel
 
 /**
- * Handle POST /v1/responses (OpenAI Responses API compatible).
+ * Handle POST /v1/messages (Anthropic Messages API compatible).
  */
-export const handleResponses = async (
+export const handleMessages = async (
   req: IncomingMessage,
   res: ServerResponse,
   ctx: HandlerContext,
@@ -68,9 +68,9 @@ export const handleResponses = async (
     return
   }
 
-  let body: ResponsesRequest
+  let anthropicBody: AnthropicMessagesRequest
   try {
-    body = (await readJsonBody(req)) as ResponsesRequest
+    anthropicBody = (await readJsonBody(req)) as AnthropicMessagesRequest
   } catch (error) {
     sendError(
       res,
@@ -80,74 +80,50 @@ export const handleResponses = async (
     return
   }
 
-  const mapped = mapResponsesRequestToChat(body)
-  if (mapped.messages.length === 0) {
-    sendError(res, 400, "input must contain at least one message")
+  if (!Array.isArray(anthropicBody.messages) || anthropicBody.messages.length === 0) {
+    sendError(res, 400, "messages must be a non-empty array")
     return
   }
 
-  const chatBody: OpenAiChatRequest = {
-    model: mapped.model,
-    messages: mapped.messages,
-    stream: mapped.stream,
-    user: mapped.user,
-    tools: mapped.tools,
-    mode: mapped.mode,
-    reasoning_effort: mapped.reasoningEffort,
-  }
-
+  const body = anthropicToOpenAi(anthropicBody)
   const requestId = createRequestId()
-  const responseId = `resp_${requestId}`
-  const model = resolveModel(chatBody.model, ctx.config)
+  const model = resolveModel(body.model, ctx.config)
 
   let requestedMode: ProxyConfig["agentMode"]
   try {
-    requestedMode = resolveRequestMode(
-      ctx.config,
-      req.headers["x-cursor-mode"],
-      chatBody.mode,
-    )
+    requestedMode = resolveRequestMode(ctx.config, req.headers["x-cursor-mode"], body.mode)
   } catch (error) {
-    sendError(
-      res,
-      400,
-      error instanceof Error ? error.message : "Invalid mode",
-    )
+    sendError(res, 400, error instanceof Error ? error.message : "Invalid mode")
     return
   }
 
   const execution = resolveHermesExecution(
     ctx.config,
     requestedMode,
-    chatBody,
+    body,
     resolvePlan2ApiClient(req.headers),
   )
 
-  const responseFormat = parseResponseFormat(chatBody)
+  const responseFormat = parseResponseFormat(body)
   const jsonInstruction = responseFormat
     ? buildJsonModeInstruction(responseFormat)
     : undefined
 
   const toolsText = execution.injectToolsAsPrompt
-    ? toolsToOpenRouterSystemText(chatBody.tools, chatBody.functions)
+    ? toolsToOpenRouterSystemText(body.tools, body.functions)
     : undefined
   const systemParts: Array<{ role: "system"; content: string }> = []
-  if (execution.systemPrompt) {
-    systemParts.push({ role: "system", content: execution.systemPrompt })
-  }
+  if (execution.systemPrompt) systemParts.push({ role: "system", content: execution.systemPrompt })
   if (execution.planSystemPrompt) {
     systemParts.push({ role: "system", content: execution.planSystemPrompt })
   }
-  if (jsonInstruction) {
-    systemParts.push({ role: "system", content: jsonInstruction })
-  }
-  if (toolsText) {
-    systemParts.push({ role: "system", content: toolsText })
-  }
+  if (jsonInstruction) systemParts.push({ role: "system", content: jsonInstruction })
+  if (toolsText) systemParts.push({ role: "system", content: toolsText })
 
-  const fixedMessages = applyToolFixes(chatBody.messages)
+  const fixedMessages = applyToolFixes(body.messages)
   const compressedMessages = compressMessages(fixedMessages, ctx.config.maxHistoryTokens)
   const messages = [...systemParts, ...compressedMessages]
+
   let promptCleanup: (() => Promise<void>) | undefined
   let fullPrompt = ""
   let prompt = ""
@@ -157,17 +133,13 @@ export const handleResponses = async (
     fullPrompt = built.prompt
     promptCleanup = built.cleanup
 
-    const sessionKey = ctx.sessionStore.resolveKey(req, chatBody, model)
+    const sessionKey = ctx.sessionStore.resolveKey(req, body, model)
     const resumeEligible =
       ctx.config.sessionResume &&
       fullPrompt.length >= ctx.config.sessionResumeMinChars &&
-      canResumeSession(chatBody.messages)
-    const resumeSessionId = resumeEligible
-      ? ctx.sessionStore.get(sessionKey)
-      : undefined
-    const resumePrompt = resumeSessionId
-      ? buildResumePrompt(chatBody.messages)
-      : null
+      canResumeSession(body.messages)
+    const resumeSessionId = resumeEligible ? ctx.sessionStore.get(sessionKey) : undefined
+    const resumePrompt = resumeSessionId ? buildResumePrompt(body.messages) : null
     prompt =
       resumeSessionId && resumePrompt
         ? toolsText
@@ -185,28 +157,23 @@ export const handleResponses = async (
             execution.cliMode === "ask" ? ctx.config.chatOnlyWorkspace : false,
           )
     const runner = new CursorAgentRunner(ctx.config)
-    const emitReasoning = shouldEmitReasoning(
-      model,
-      chatBody.reasoning_effort ?? mapped.reasoningEffort,
-    )
 
     const invocation = {
       model,
       prompt,
-      stream: chatBody.stream === true,
+      stream: body.stream === true,
       mode: execution.cliMode,
       workspaceDir: workspace.workspaceDir,
       suppressNativeToolCalls: execution.hermesDelegation,
       resumeSessionId,
-      emitReasoning,
+      emitReasoning: false,
     }
 
-    logRequest(ctx.config.verboseLogging, "POST", "/v1/responses", {
+    logRequest(ctx.config.verboseLogging, "POST", "/v1/messages", {
       id: requestId,
       model,
       stream: invocation.stream,
-      emit_reasoning: emitReasoning,
-      prompt_chars: prompt.length,
+      anthropic: true,
     })
 
     await ctx.agentPool?.ensureWarm()
@@ -214,20 +181,19 @@ export const handleResponses = async (
 
     try {
       if (invocation.stream) {
-        await handleResponsesStreaming(
+        await handleAnthropicStreaming(
           res,
           runner,
           invocation,
           requestId,
-          responseId,
           model,
           prompt,
           ctx,
           startedAt,
-          execution.hermesDelegation,
-          execution.openRouterCompat,
-          chatBody,
+          execution,
+          body,
           sessionKey,
+          responseFormat,
         )
         return
       }
@@ -241,33 +207,20 @@ export const handleResponses = async (
         result.toolCalls ?? parseToolCallsFromText(result.text),
       )
       const finalized = execution.hermesDelegation
-        ? finalizeHermesDelegationOutput(
-            execution.hermesDelegation,
-            result.text,
-            rawToolCalls,
-          )
-        : finalizeOpenRouterOutput(
-            execution.openRouterCompat,
-            result.text,
-            chatBody,
-            rawToolCalls,
-          )
+        ? finalizeHermesDelegationOutput(execution.hermesDelegation, result.text, rawToolCalls)
+        : finalizeOpenRouterOutput(execution.openRouterCompat, result.text, body, rawToolCalls)
+
       const jsonText = finalizeJsonModeOutput(finalized.text, responseFormat)
       const usage = buildUsage(result.usage, prompt, jsonText)
-
-      sendJson(
-        res,
-        200,
-        createResponsesResponse(
-          responseId,
-          result.model || model,
-          jsonText,
-          usage,
-          result.reasoningText,
-          finalized.toolCalls,
-        ),
+      const response = openAiToAnthropic(
+        requestId,
+        result.model || model,
+        jsonText,
+        finalized.toolCalls,
+        usage,
       )
 
+      sendJson(res, 200, response)
       logResponse(ctx.config.verboseLogging, requestId, 200, Date.now() - startedAt, {
         model: result.model || model,
         usage,
@@ -295,54 +248,36 @@ export const handleResponses = async (
   }
 }
 
-const handleResponsesStreaming = async (
+const handleAnthropicStreaming = async (
   res: ServerResponse,
   runner: CursorAgentRunner,
   invocation: Parameters<CursorAgentRunner["runSyncJson"]>[0],
   requestId: string,
-  responseId: string,
   model: string,
   prompt: string,
   ctx: HandlerContext,
   startedAt: number,
-  hermesDelegation = false,
-  openRouterCompat = false,
-  requestBody?: OpenAiChatRequest,
+  execution: ReturnType<typeof resolveHermesExecution>,
+  requestBody: OpenAiChatRequest,
   sessionKey?: string,
+  responseFormat?: ReturnType<typeof parseResponseFormat>,
 ): Promise<void> => {
   writeSse(res, {
     "X-Request-Id": requestId,
+    "Content-Type": "text/event-stream",
   })
 
   let closed = false
   let fullText = ""
-  let reasoningText = ""
   let resolvedModel = model
   let cliUsage: Parameters<typeof buildUsage>[0]
   let cursorSessionId: string | undefined
-  const itemId = `msg_${responseId}`
 
   const closeStream = (): void => {
     if (closed) return
     closed = true
-    writeSse(res, {}, "data: [DONE]\n\n")
     endSse(res)
   }
-
-  writeSse(
-    res,
-    {},
-    `event: response.created\ndata: ${JSON.stringify({
-      type: "response.created",
-      response: {
-        id: responseId,
-        object: "response",
-        created_at: Math.floor(Date.now() / 1000),
-        model,
-        status: "in_progress",
-      },
-    })}\n\n`,
-  )
 
   await new Promise<void>((resolve) => {
     const finish = (): void => {
@@ -350,60 +285,64 @@ const handleResponsesStreaming = async (
       resolve()
     }
 
-    const emitTextDelta = (text: string) => {
+    runner.on("delta", ({ text }) => {
       if (!text) return
       fullText += text
       writeSse(
         res,
         {},
-        `event: response.output_text.delta\ndata: ${JSON.stringify({
-          type: "response.output_text.delta",
-          item_id: itemId,
-          output_index: 0,
-          content_index: 0,
-          delta: text,
-        })}\n\n`,
-      )
-    }
-
-    runner.on("reasoning", ({ text }) => {
-      if (!text) return
-      reasoningText += text
-      writeSse(
-        res,
-        {},
-        `event: response.reasoning_text.delta\ndata: ${JSON.stringify({
-          type: "response.reasoning_text.delta",
-          item_id: itemId,
-          output_index: 0,
-          content_index: 0,
-          delta: text,
+        `event: content_block_delta\ndata: ${JSON.stringify({
+          type: "content_block_delta",
+          index: 0,
+          delta: { type: "text_delta", text },
         })}\n\n`,
       )
     })
 
-    runner.on("delta", ({ text }) => {
-      if (openRouterCompat && looksLikeToolCallJson(text)) return
-      emitTextDelta(text)
-    })
-
-    runner.on("result", ({ text, model: detectedModel, usage, sessionId, reasoningText: resultReasoning }) => {
+    runner.on("result", ({ text, model: detectedModel, usage, sessionId }) => {
       if (sessionId) cursorSessionId = sessionId
       if (text && !fullText.includes(text)) fullText = text
       resolvedModel = detectedModel || model
       cliUsage = usage
-      if (resultReasoning) reasoningText = resultReasoning
     })
 
     runner.on("error", (error) => {
       writeSse(
         res,
         {},
-        `data: ${JSON.stringify({ error: { message: error.message, type: "server_error", code: null } })}\n\n`,
+        `event: error\ndata: ${JSON.stringify({ type: "error", error: { type: "api_error", message: error.message } })}\n\n`,
       )
       closeStream()
       finish()
     })
+
+    writeSse(
+      res,
+      {},
+      `event: message_start\ndata: ${JSON.stringify({
+        type: "message_start",
+        message: {
+          id: `msg_${requestId}`,
+          type: "message",
+          role: "assistant",
+          model,
+          content: [],
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0 },
+        },
+      })}\n\n`,
+    )
+
+    writeSse(
+      res,
+      {},
+      `event: content_block_start\ndata: ${JSON.stringify({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      })}\n\n`,
+    )
 
     runner
       .runStream(invocation)
@@ -414,40 +353,33 @@ const handleResponsesStreaming = async (
         }
 
         const rawToolCalls = fixToolCalls(parseToolCallsFromText(fullText))
-        const finalized = hermesDelegation
-          ? finalizeHermesDelegationOutput(hermesDelegation, fullText, rawToolCalls)
+        const finalized = execution.hermesDelegation
+          ? finalizeHermesDelegationOutput(execution.hermesDelegation, fullText, rawToolCalls)
           : finalizeOpenRouterOutput(
-              openRouterCompat,
+              execution.openRouterCompat,
               fullText,
-              requestBody ?? { messages: [] },
+              requestBody,
               rawToolCalls,
             )
-        const jsonText = finalizeJsonModeOutput(finalized.text || fullText, parseResponseFormat(requestBody ?? { messages: [] }))
+        const jsonText = finalizeJsonModeOutput(finalized.text || fullText, responseFormat)
         const usage = buildUsage(cliUsage, prompt, jsonText || fullText)
 
         if (ctx.config.sessionResume && cursorSessionId && sessionKey) {
           ctx.sessionStore.set(sessionKey, cursorSessionId)
         }
 
-        const response = createResponsesResponse(
-          responseId,
+        const events = createAnthropicStreamEvents(
+          requestId,
           resolvedModel,
-          jsonText || fullText,
-          usage,
-          reasoningText,
+          jsonText,
           finalized.toolCalls,
+          usage,
         )
+        for (const event of events.slice(2)) {
+          writeSse(res, {}, event)
+        }
 
-        writeSse(
-          res,
-          {},
-          `event: response.completed\ndata: ${JSON.stringify({
-            type: "response.completed",
-            response,
-          })}\n\n`,
-        )
         closeStream()
-
         logResponse(ctx.config.verboseLogging, requestId, 200, Date.now() - startedAt, {
           model: resolvedModel,
           usage,
@@ -462,13 +394,16 @@ const handleResponsesStreaming = async (
         writeSse(
           res,
           {},
-          `data: ${JSON.stringify({ error: { message: error instanceof Error ? error.message : String(error), type: "server_error", code: null } })}\n\n`,
+          `event: error\ndata: ${JSON.stringify({
+            type: "error",
+            error: {
+              type: "api_error",
+              message: error instanceof Error ? error.message : String(error),
+            },
+          })}\n\n`,
         )
         closeStream()
         finish()
       })
   })
 }
-
-const looksLikeToolCallJson = (text: string): boolean =>
-  /"tool_calls"\s*:/.test(text) || /^\s*\{/.test(text)

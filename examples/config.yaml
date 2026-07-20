@@ -1,0 +1,35 @@
+# Cursor-Plan2API configuration
+# Copy to ~/.cursor-plan2api/config.yaml or ./config.yaml
+# Environment variables override these values.
+
+host: 127.0.0.1
+port: 8787
+default_model: composer-2.5
+mode: ask
+
+# Context & continuation
+max_history_tokens: 80000
+auto_continue_max: 3
+
+# Optional local API key
+# api_key: your-secret-key
+
+# Client compatibility: openrouter | delegate
+client_compat: openrouter
+
+# Session resume for long conversations
+session_resume: true
+session_resume_min_chars: 12000
+
+# Model catalog
+include_model_catalog: true
+# extra_models:
+#   - id: custom-model
+#     name: Custom Model
+
+# Agent pool (warm CLI slots)
+agent_pool: false
+agent_pool_size: 2
+
+# Logging
+verbose: false
