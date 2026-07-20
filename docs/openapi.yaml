@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Cursor-Plan2API
-  version: 0.3.0
+  version: 0.3.1
   description: |
     OpenAI-compatible HTTP bridge for the Cursor CLI subscription (`agent login`).
     Also exposes Anthropic Messages API and OpenAI Responses API.
@@ -151,16 +151,28 @@ paths:
                 additionalProperties: true
   /admin:
     get:
-      summary: Admin request log UI
+      summary: Admin dashboard UI
       operationId: getAdmin
       tags: [Admin]
       responses:
         "200":
-          description: HTML admin page
+          description: HTML admin dashboard with stats cards and live request log
           content:
             text/html:
               schema:
                 type: string
+  /admin/stats:
+    get:
+      summary: Admin dashboard stats (JSON)
+      operationId: getAdminStats
+      tags: [Admin]
+      responses:
+        "200":
+          description: Gateway stats — auth bridge, sessions, agent pool, usage summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminStatsResponse"
   /admin/logs:
     get:
       summary: Request log JSON
@@ -405,6 +417,69 @@ components:
           type: array
           items:
             type: object
+        thinking:
+          type: object
+          description: Anthropic extended thinking config
+          properties:
+            type:
+              type: string
+              enum: [enabled, disabled]
+            budget_tokens:
+              type: integer
+              description: Thinking token budget (default 10000 when enabled)
+    AdminStatsResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        auth_label:
+          type: string
+          example: cli-subscription+dashboard-api-key
+        auth_bridge:
+          type: object
+          properties:
+            cli_subscription:
+              type: boolean
+            dashboard_api_key:
+              type: boolean
+            source:
+              type: string
+              enum: [cli-keychain, dashboard-api-key, none]
+        cli_version:
+          type: string
+        cached_sessions:
+          type: integer
+        session_persistence:
+          type: string
+          description: SQLite database path
+        compression_level:
+          type: string
+          enum: [minimal, default, aggressive]
+        outbound_proxy:
+          type: boolean
+        agent_pool:
+          type: object
+          additionalProperties: true
+        profile_rotation:
+          type: string
+        profiles:
+          type: array
+          items:
+            type: string
+        usage_summary:
+          type: object
+          nullable: true
+          properties:
+            start_of_month:
+              type: string
+            model_count:
+              type: integer
+            estimated_cost_usd_total:
+              type: number
+        timestamp:
+          type: string
+          format: date-time
     AnthropicMessageResponse:
       type: object
       properties:

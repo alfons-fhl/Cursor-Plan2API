@@ -91,7 +91,7 @@ cursor-plan2api/auto
 | 🔁 **Auto-continue** | Resume truncated outputs (`AUTO_CONTINUE_MAX`) |
 | 📋 **JSON mode** | `response_format: { type: "json_object" }` |
 | 📈 **Stream usage** | `stream_options.include_usage` in final SSE chunk |
-| 🛠️ **Admin log UI** | `GET /admin` + live SSE tail at `/admin/logs/stream` |
+| 🛠️ **Admin dashboard** | `GET /admin` with live stats (`/admin/stats`) + SSE log tail |
 | 🎮 **Web playground** | `GET /playground` — chat UI with model picker & streaming |
 | 📄 **OpenAPI 3.1** | `GET /openapi.json`, `GET /docs/openapi.yaml` |
 | 🔄 **Multi-profile rotation** | Round-robin / LRU across multiple `agent login` sessions |
@@ -118,19 +118,20 @@ agent status
 
 ## ⚡ Quick Start
 
-### Install from npm (publish-ready)
+### Install from npm (v0.3.1)
 
 ```bash
-npm install -g cursor-plan2api
+npm install -g cursor-plan2api@0.3.1
 cursor-plan2api
 ```
 
 **Publishing** (maintainers):
 
 ```bash
+npm version patch          # bump package.json (currently v0.3.1)
 npm run build
-npm publish --dry-run   # verify package contents
-npm login               # one-time npm auth
+npm publish --dry-run      # verify dist/, docs/, examples/, README
+npm login                  # one-time npm auth
 npm publish --access public
 ```
 
@@ -384,7 +385,8 @@ Base URL: `http://127.0.0.1:8787`
 | `POST` | `/v1/responses` | OpenAI Responses API |
 | `POST` | `/v1/embeddings` | Semantic embeddings (`semantic` or `local` provider) |
 | `POST` | `/v1/images/generations` | Image generation via Cursor `generateImageToolCall` |
-| `GET` | `/admin` | HTML request log UI with live SSE tail |
+| `GET` | `/admin` | HTML dashboard — stats cards + live request log |
+| `GET` | `/admin/stats` | JSON dashboard stats (auth, sessions, pool, usage summary) |
 | `GET` | `/admin/logs` | JSON request log (`?limit=100`) |
 | `GET` | `/admin/logs/stream` | SSE stream of new requests |
 | `GET` | `/playground` | Browser chat UI (model picker + stream toggle) |
@@ -469,16 +471,23 @@ Returns live Cursor subscription usage from `api2.cursor.sh`. Each model entry i
 curl http://127.0.0.1:8787/v1/usage | jq '.estimated_cost_usd_total, .models'
 ```
 
-### Admin & request logs
+### Admin dashboard & request logs
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /admin` | HTML request log UI with live SSE tail |
+| `GET /admin` | HTML dashboard — stats cards + live request log table |
+| `GET /admin/stats` | JSON stats: auth bridge, CLI version, cached sessions, agent pool, compression level, usage summary |
 | `GET /playground` | HTML chat playground |
 | `GET /admin/logs` | JSON log (`?limit=100`, default 100) |
 | `GET /admin/logs/stream` | SSE stream of new requests |
 
-Open `http://127.0.0.1:8787/admin` in a browser. When `CURSOR_PLAN2API_API_KEY` is set, pass `Authorization: Bearer <key>` on API requests; the admin page uses the same origin.
+Open `http://127.0.0.1:8787/admin` in a browser. The page fetches `/admin/stats` on load and tails `/admin/logs/stream` for new requests.
+
+```bash
+curl http://127.0.0.1:8787/admin/stats | jq '.auth_label, .cached_sessions, .usage_summary'
+```
+
+When `CURSOR_PLAN2API_API_KEY` is set, pass `Authorization: Bearer <key>` on API requests; the admin page uses the same origin.
 
 Enable request capture with `CURSOR_PLAN2API_VERBOSE=true` (or `verbose: true` in config).
 
@@ -535,11 +544,20 @@ client_compat: openrouter
 
 # Context & continuation
 max_history_tokens: 80000
+compression_level: default   # minimal | default | aggressive
 auto_continue_max: 3
 
-# Session resume
+# Session resume (persisted to SQLite)
 session_resume: true
 session_resume_min_chars: 12000
+# session_db_path: ~/.cursor-plan2api/sessions.db
+
+# Optional Dashboard API key for /v1/usage on Linux/Windows
+# cursor_api_key: your-dashboard-key
+
+# Outbound proxy for usage API and https:// vision downloads
+# http_proxy: http://127.0.0.1:8080
+# https_proxy: http://127.0.0.1:8080
 
 # Model catalog
 include_model_catalog: true
@@ -578,15 +596,25 @@ verbose: false
 | `CURSOR_PLAN2API_SESSION_RESUME` | `true` | Cursor CLI `--resume` for long conversations |
 | `CURSOR_PLAN2API_SESSION_RESUME_MIN_CHARS` | `12000` | Min prompt size before resume kicks in |
 | `CURSOR_PLAN2API_SESSION_TTL_MS` | `3600000` | Session store TTL (1 hour) |
-| `CURSOR_PLAN2API_SESSION_DB_PATH` | `~/.cursor-plan2api/sessions.db` | Persistent session database path |
+| `CURSOR_PLAN2API_SESSION_DB_PATH` | `~/.cursor-plan2api/sessions.db` | SQLite path — sessions survive gateway restarts |
 | `CURSOR_PLAN2API_MAX_HISTORY_TOKENS` | `80000` | Context compression budget (head+tail truncation) |
-| `CURSOR_PLAN2API_COMPRESSION_LEVEL` | `default` | `minimal`, `default`, or `aggressive` |
+| `CURSOR_PLAN2API_COMPRESSION_LEVEL` | `default` | `minimal` (loose), `default`, or `aggressive` (tight) |
 | `CURSOR_PLAN2API_AUTO_CONTINUE_MAX` | `3` | Auto-continue retries on truncated output |
 | `CURSOR_PLAN2API_COMPACT_TOOLS` | `false` | Compact tool schemas in prompts |
 | `CURSOR_PLAN2API_PROFILE_ROTATION` | `none` | `round-robin`, `lru`, or `none` |
 | `CURSOR_PLAN2API_PROFILES` | — | JSON array or `name:bin:workspace` tuples |
-| `CURSOR_PLAN2API_CURSOR_API_KEY` | — | Dashboard API key (or set `CURSOR_API_KEY`) |
-| `HTTP_PROXY` / `HTTPS_PROXY` | — | Outbound proxy for usage API and vision URL downloads |
+| `CURSOR_PLAN2API_CURSOR_API_KEY` | — | Dashboard API key (alias: `CURSOR_API_KEY`) for `/v1/usage` |
+| `HTTP_PROXY` / `HTTPS_PROXY` | — | Outbound proxy for usage API and `https://` vision downloads |
+
+**Compression levels** (`CURSOR_PLAN2API_COMPRESSION_LEVEL`):
+
+| Level | Effect |
+|-------|--------|
+| `minimal` | 1.25× token budget, keeps more turns and tool results |
+| `default` | Balanced head+tail truncation |
+| `aggressive` | 0.6× budget, tighter truncation for very long histories |
+
+**Cursor SDK bridge** — Chat execution always uses the Cursor CLI (`agent login`). Optionally set `CURSOR_API_KEY` (or `cursor_api_key` in config) to enable Dashboard API auth for `GET /v1/usage` and the admin stats panel on Linux/Windows where macOS Keychain is unavailable. Both auth sources can coexist (`cli-subscription+dashboard-api-key`).
 
 #### Model catalog
 
@@ -694,10 +722,10 @@ tail -f ~/.cursor-plan2api/server.log
 
 ## 🧪 Tests & CI
 
-GitHub Actions runs on every push to `main` / `cursor/**` branches: `npm ci` → `npm run build` → `npm run test:unit` → catalog sync check → OpenAPI YAML validation. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+GitHub Actions runs on every push to `main` / `cursor/**` branches: `npm ci` → `npm run build` → `npm run test:unit` → `npm run test:catalog` → OpenAPI YAML validation. See [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ```bash
-npm run test:catalog      # compare agent --list-models vs catalog.ts
+npm run test:catalog      # compare agent --list-models vs src/cursor/catalog.ts (CI gate)
 ```
 
 ```bash
@@ -769,7 +797,7 @@ Cursor-Plan2API/
 │   │   ├── chat-completions.ts     # POST /v1/chat/completions
 │   │   ├── messages.ts             # POST /v1/messages (Anthropic)
 │   │   ├── responses.ts            # POST /v1/responses
-│   │   ├── admin.ts                # GET /admin, /admin/logs
+│   │   ├── admin.ts                # GET /admin, /admin/stats, /admin/logs
 │   │   ├── playground.ts           # GET /playground
 │   │   ├── docs.ts                 # GET /openapi.json, /docs
 │   │   └── usage.ts                # GET /v1/usage + cost estimates

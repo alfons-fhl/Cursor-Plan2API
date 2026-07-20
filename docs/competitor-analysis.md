@@ -59,7 +59,7 @@
 | Embeddings | `src/handlers/embeddings.ts` (Xenova semantic) | Unique among competitors |
 | Image generation | `src/handlers/images.ts` (native Cursor tool) | Unique among competitors |
 | Usage API + cost estimates | `GET /v1/usage` + `src/cursor/pricing.ts` | Per-model `estimated_cost_usd` |
-| Admin / log UI | `GET /admin`, `/admin/logs`, SSE tail | Debugging without tailing files |
+| Admin / log UI | `GET /admin`, `/admin/stats`, `/admin/logs`, SSE tail | Stats cards + live request log |
 | Docker + compose | `Dockerfile`, `docker-compose.yml` | `~/.cursor` auth mount |
 | Agent pool | `src/cursor/agent-pool.ts` | Warm CLI slots |
 | systemd / launchd | `deploy/systemd`, `deploy/launchd` | Always-on gateway |
@@ -71,7 +71,10 @@
 | Web playground | `GET /playground` — browser chat UI | Unique among CLI bridges |
 | Multi-profile rotation | `src/cursor/profile-rotator.ts` — round-robin / LRU | Parity with cookie-based multi-key proxies |
 | Compact tool schemas | `src/openai/compact-tools.ts` | Large Hermes/OpenCode tool arrays |
-| npm publish-ready | `package.json` v0.3.0, `prepublishOnly`, `files` whitelist | `npm install -g cursor-plan2api` |
+| npm publish-ready | `package.json` v0.3.1, `prepublishOnly`, `files` whitelist | `npm install -g cursor-plan2api@0.3.1` |
+| Catalog sync CI | `scripts/sync-catalog-check.mjs`, `npm run test:catalog` | Keeps `catalog.ts` aligned with CLI |
+| Session persistence | `src/cursor/session-persistence.ts` — SQLite | Survives gateway restarts |
+| Cursor SDK bridge | `src/cursor/bridge-auth.ts` — dual CLI + `CURSOR_API_KEY` auth | Usage API on Linux/Windows |
 | GitHub Actions CI | `.github/workflows/ci.yml` — build, unit tests, OpenAPI validate | Automated quality gate |
 
 ### Known limitations
@@ -81,7 +84,6 @@
 | ~10–20s per turn (without pool) | New `agent` process per request; pool reduces cold start |
 | Cost estimates approximate | Based on published pricing; Composer subscription shows $0 |
 | Fable models require data policy | Cursor app must accept data retention policy |
-| npm not yet published | Package is publish-ready; run `npm publish` with token when ready |
 
 ---
 
@@ -179,7 +181,7 @@ Also improved: Anthropic streaming (`src/anthropic/stream.ts`), vision temp-file
 
 ## Remaining backlog (P2+)
 
-**Shipped** on branch `cursor/hermes-agent-delegation` (commit `266b24f`).
+**Shipped** on branch `cursor/hermes-agent-delegation` (commits `266b24f`, `53d23e2`).
 
 | ID | Feature | Implementation |
 |----|---------|----------------|
@@ -191,7 +193,7 @@ Also improved: Anthropic streaming (`src/anthropic/stream.ts`), vision temp-file
 | — | HTTPS vision URLs | `src/openai/vision.ts` — download with size/MIME limits |
 | — | Catalog sync CI | `scripts/sync-catalog-check.mjs` + GitHub Actions step |
 | — | Admin dashboard stats | `GET /admin/stats`, richer `/admin` HTML |
-| — | npm publish readiness | `package.json` v0.3.1, `npm publish --dry-run` verified |
+| — | npm publish v0.3.1 | `package.json` v0.3.1, `npm publish --dry-run` verified |
 
 ---
 
@@ -233,8 +235,10 @@ Also improved: Anthropic streaming (`src/anthropic/stream.ts`), vision temp-file
 ## Suggested next steps
 
 ```text
-Sprint 8 (P2+): Outbound HTTP proxy → Anthropic thinking budget → Cursor SDK bridge → npm publish
+Sprint 9+: Latency reduction (persistent agent pool), native CLI vision flags, automated catalog sync from CI
 ```
+
+P0, P1, P2, and P2+ (Sprint 8) are complete. Primary remaining gap is per-request CLI spawn overhead (~10–20s/turn without pool).
 
 ---
 
